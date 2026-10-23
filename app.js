@@ -2,7 +2,7 @@ import * as C from './core.js';
 import * as DB from './db.js';
 import * as S from './sync.js';
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.1.0';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -13,10 +13,10 @@ const LANES = { main: '主线', side: '副线', paused: '暂停区', done: '已�
 const STAGES = { draft: '草稿', carded: '待讲', told: '已讲', library: '已入库' };
 const STAGE_STEP = { draft: 1, carded: 2, told: 3, library: 3 };
 const STEPS = [
-  ['ACTION 01', '做：2小时专注行动', '不刷碎片，不囤干货。只做能产生结果的事：读书、方案、实践。'],
-  ['EXTRACT 02', '卡：30分钟提炼卡片', '核心、逻辑、方法、边界。写不清 = 没学透。'],
-  ['FEYNMAN 03', '讲：5-10分钟费曼输出', '不看稿讲清：痛点→原理→步骤→行动。卡壳即是认知漏洞。'],
-  ['OPTIMIZE 04', '送：迭代优化资产', '补齐漏点，精简表达。形成个人可复用的知识资产。'],
+  ['做', '2 小时专注', '不刷碎片，不囤干货。只做能产生结果的事：读书、方案、实践。'],
+  ['卡', '30 分钟提炼', '核心、逻辑、方法、边界。写不清，就是没学透。'],
+  ['讲', '5 到 10 分钟费曼', '不看稿讲清：痛点、原理、步骤、行动。卡壳的地方就是认知漏洞。'],
+  ['送', '迭代成资产', '补齐漏洞，精简表达，变成别人也能直接用的东西。'],
 ];
 const REVIEW_STEPS = ['对账', '清空散块盒', '抽卡自测', '引领动作', '停止规则检查', '下周预测'];
 const TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new?' + new URLSearchParams({
@@ -281,8 +281,8 @@ function syncBadge() {
   const c = cfg();
   const last = Number(localStorage.getItem('pp.lastSync') || 0);
   let cls = '', text;
-  if (!navigator.onLine || state.sync.status === 'offline') { cls = ''; text = '离线，联网后自动同步'; }
-  else if (!c.token) text = '仅本机';
+  if (!navigator.onLine || state.sync.status === 'offline') { cls = 'off'; text = '离线，联网后同步'; }
+  else if (!c.token) text = '只在本机';
   else if (state.sync.status === 'busy') { cls = 'busy'; text = '同步中…'; }
   else if (state.sync.status === 'err') { cls = 'err'; text = '同步失败'; }
   else if (last) { cls = 'ok'; text = '已同步 ' + new Date(last).toTimeString().slice(0, 5); }
@@ -302,27 +302,68 @@ function syncDetail() {
 
 // ================= 公共片段 =================
 
+const ICON = {
+  back: '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>',
+  gear: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M21.2 12h-2.6M5.4 12H2.8M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8M18.5 18.5l-1.8-1.8M7.3 7.3L5.5 5.5"/></svg>',
+};
+
 function top(title, { back, home } = {}) {
   return `<div class="top">
-    ${back ? `<button class="back" data-act="go" data-to="${esc(back)}" aria-label="返回">‹</button>` : ''}
-    <div class="grow">${home ? `<h1>${esc(title)}</h1><div class="date">${fmtDate(Date.now())}</div>` : `<h1 style="font-size:19px">${esc(title)}</h1>`}</div>
+    ${back ? `<button class="back" data-act="go" data-to="${esc(back)}" aria-label="返回">${ICON.back}</button>` : ''}
+    <div class="grow">${home ? `<div class="today">${fmtDate(Date.now())}</div>` : `<div class="page-title">${esc(title)}</div>`}</div>
     ${syncBadge()}
-    ${home ? `<button class="icon-btn" data-act="go" data-to="#/settings" aria-label="设置">⚙</button>` : ''}
+    ${home ? `<button class="icon-btn" data-act="go" data-to="#/settings" aria-label="设置">${ICON.gear}</button>` : ''}
   </div>`;
 }
 
+let svgSeq = 0;
+
+// 整幅拼图：拼上的块露出这幅拼图自己的风景，空位是灰的
 function jigsawSvg(pz, { mini = false } = {}) {
   const ps = piecesOf(pz.id);
-  if (!ps.length) return `<div class="muted" style="padding:12px 0">还没有拼块</div>`;
+  if (!ps.length) return `<div class="empty">还没有拼块，先在下面加一块。</div>`;
   const J = C.jigsaw(ps.length);
   const W = J.cols * J.size, H = J.rows * J.size;
-  const gs = J.pieces.map((g, i) => {
-    const p = ps[i];
-    const act = mini ? '' : `data-act="go" data-to="#/piece/${p.id}"`;
-    return `<g class="${pieceState(p)} ${mini ? '' : 'tap'}" data-piece="${p.id}" ${act}><path d="${g.d}"/><text x="${g.cx}" y="${g.cy}">${i + 1}</text></g>`;
-  }).join('');
-  return `<svg class="jigsaw ${mini ? 'mini' : ''}" viewBox="-4 -4 ${W + 8} ${H + 8}" role="img" aria-label="拼图">${gs}</svg>`;
+  const uid = 'j' + (++svgSeq);
+  const art = C.picture(pz.id, W, H, uid);
+  const sts = ps.map(pieceState);
+  const doneIdx = sts.map((s, i) => (s === 'done' ? i : -1)).filter(i => i >= 0);
+  const slots = J.pieces.map((g, i) => (sts[i] === 'done' ? '' : `<g class="${sts[i]}"><path class="fill" d="${g.d}"/></g>`)).join('');
+  // 进行中的块描边最后画，免得被邻块的缝盖住
+  const order = J.pieces.map((_, i) => i).sort((a, b) => (sts[a] === 'doing') - (sts[b] === 'doing'));
+  const seams = order.map(i => { const g = J.pieces[i]; return `<g class="${sts[i]} ${mini ? '' : 'tap'}" data-piece="${ps[i].id}" ${mini ? '' : `data-act="go" data-to="#/piece/${ps[i].id}"`}>
+      <path class="seam" d="${g.d}" style="fill:transparent"/>${mini || sts[i] === 'done' ? '' : `<text x="${g.cx}" y="${g.cy}">${i + 1}</text>`}</g>`; }).join('');
+  return `<svg class="jig ${mini ? 'mini' : ''}" viewBox="-3 -3 ${W + 6} ${H + 6}" role="img" aria-label="${esc(pz.name)}：已拼 ${doneIdx.length} / ${ps.length}">
+    <defs>${art.defs}<clipPath id="${uid}-c">${doneIdx.map(i => `<path d="${J.pieces[i].d}"/>`).join('')}</clipPath></defs>
+    ${slots}
+    ${doneIdx.length ? `<g clip-path="url(#${uid}-c)">${art.body}</g>` : ''}
+    ${seams}
+  </svg>`;
 }
+
+// 单独一块：拼上了就是那一小块风景
+function pieceArt(p, { big = false } = {}) {
+  const ps = piecesOf(p.puzzleId);
+  const i = ps.findIndex(x => x.id === p.id);
+  const pz = get(p.puzzleId);
+  if (i < 0 || !pz) return '';
+  const J = C.jigsaw(ps.length);
+  const W = J.cols * J.size, H = J.rows * J.size;
+  const g = J.pieces[i];
+  const x = g.cx - 80, y = g.cy - 80;
+  const uid = 'p' + (++svgSeq);
+  const st = pieceState(p);
+  let inner;
+  if (st === 'done') {
+    const art = C.picture(pz.id, W, H, uid);
+    inner = `<defs>${art.defs}<clipPath id="${uid}-c"><path d="${g.d}"/></clipPath></defs><g clip-path="url(#${uid}-c)">${art.body}</g>`;
+  } else {
+    inner = `<path d="${g.d}" fill="${st === 'doing' ? '#F7F8F5' : 'var(--slot)'}" ${st === 'doing' ? 'stroke="var(--ink)" stroke-width="3" stroke-dasharray="7 6"' : ''}/>`;
+  }
+  return `<svg class="${big ? 'piece-hero' : 'pc'}" viewBox="${x} ${y} 160 160" aria-hidden="true">${inner}</svg>`;
+}
+
+const pcIcon = (cls = '') => `<svg class="pc pc-icon ${cls}" viewBox="-30 -30 160 160" aria-hidden="true"><path d="${C.singlePiece()}"/></svg>`;
 
 function progress(pz) {
   const ps = piecesOf(pz.id);
@@ -331,27 +372,23 @@ function progress(pz) {
 
 function focusBar(f) {
   const p = get(f.pieceId);
-  return `<div class="focus-bar">
-    <div class="grow">
-      <div style="font-size:12px;opacity:.85">专注中 · ${esc(p?.name || '')}</div>
-      <div class="clock" data-clock="${f.id}">${C.fmtClock(Date.now() - f.start)}</div>
-      <div style="font-size:12px;opacity:.85">目标 2 小时，到点自动结束</div>
-    </div>
-    <button class="btn small" data-act="focus-end" data-id="${f.id}">结束</button>
+  const pctDone = Math.min(100, ((Date.now() - f.start) / f.planned) * 100);
+  return `<div class="focus">
+    <div class="what ellipsis">正在专注：${esc(p?.name || '')}</div>
+    <div class="clock" data-clock="${f.id}">${C.fmtClock(Date.now() - f.start)}</div>
+    <div class="bar"><i data-bar="${f.id}" style="width:${pctDone.toFixed(1)}%"></i></div>
+    <div class="foot"><span>满 2 小时自动结束</span><button class="btn sm" data-act="focus-end" data-id="${f.id}">结束专注</button></div>
   </div>`;
 }
 
-function pieceRow(p, i, { showPuzzle = false } = {}) {
+function pieceRow(p) {
   const st = pieceState(p);
-  const pz = get(p.puzzleId);
-  return `<div class="piece-row tap" data-act="go" data-to="#/piece/${p.id}">
-    <div class="num ${st}">${i + 1}</div>
-    <div class="name ${st} ellipsis">${esc(p.name)}${showPuzzle && pz?.lane === 'side' ? ' <span class="tag">副线</span>' : ''}</div>
-    <span class="tag ${st === 'done' ? 'done' : st === 'doing' ? 'blue' : ''}">${PIECE_STATE[st]}</span>
+  return `<div class="row-item tap" data-act="go" data-to="#/piece/${p.id}">
+    ${pieceArt(p)}
+    <div class="grow"><div class="name ${st} ellipsis">${esc(p.name)}</div></div>
+    <span class="state ${st}">${PIECE_STATE[st]}</span>
   </div>`;
 }
-
-const singleSvg = cls => `<svg viewBox="-30 -30 160 160" class="${cls || ''}"><path d="${C.singlePiece()}"/></svg>`;
 
 // ================= 页面：首页 =================
 
@@ -360,159 +397,135 @@ function pageHome() {
   const f = activeFocus();
   const today = todayPieces();
   const scat = scatterNotes();
-  const todayScatter = scat.filter(n => C.dayStr(n.at) === C.dayStr()).length;
   const lead = leadSummary();
-  let h = top('拼图推进', { home: true });
+  let h = top('', { home: true });
   if (f) h += focusBar(f);
 
   if (!m) {
-    h += `<div class="card hero">
-      <h2>以输出倒逼输入<br>用实践校准认知</h2>
-      <div class="label">DAILY WORKFLOW</div>
-      <p class="desc" style="margin:14px 0 16px">一幅拼图 = 一个目标。先建第一幅主线拼图。</p>
-      <button class="btn" data-act="go" data-to="#/new-puzzle">新建主线拼图</button>
-      ${cfg().token ? '' : `<p class="muted" style="margin-top:12px">在别的设备上已经有数据？<a class="link" href="#/settings">先去设置里开同步</a></p>`}
-    </div>`;
-  } else {
-    const pr = progress(m);
-    h += `<div class="card tap" data-act="go" data-to="#/puzzle/${m.id}" id="home-main">
-      <div class="label">MAIN PUZZLE · 主线</div>
-      <div class="title">${esc(m.name)}</div>
-      <div class="row" style="margin-top:10px;align-items:center">
-        <div style="width:46%;max-width:200px">${jigsawSvg(m, { mini: true })}</div>
-        <div class="grow" style="padding-left:8px">
-          <div class="stat"><b>${pr.done}</b><span class="desc">/ ${pr.total} 块已拼上</span></div>
-          <div class="desc" style="margin-top:6px">${esc(daysLeft(m.deadline))}</div>
-          <div class="muted ellipsis">验收人：${esc(m.acceptor)}</div>
-        </div>
-      </div>
-    </div>`;
-
-    h += `<div class="card" id="home-today">
-      <div class="label" style="display:flex;justify-content:space-between"><span>TODAY · 今天的 1–3 块</span>${today.length ? `<button class="link" data-act="pick-today">调整</button>` : ''}</div>`;
-    if (!today.length) {
-      h += `<p class="desc" style="margin:8px 0 12px">开工前从主线挑 1–3 块，今天只做这几块。</p>
-        <button class="btn" data-act="pick-today">挑今天的块</button>`;
-    } else {
-      h += today.map((p, i) => {
-        const focusing = f?.pieceId === p.id;
-        return `<div class="piece-row">
-          <div class="num doing">${i + 1}</div>
-          <div class="name ellipsis tap" data-act="go" data-to="#/piece/${p.id}">${esc(p.name)}${get(p.puzzleId)?.lane === 'side' ? ' <span class="tag">副线</span>' : ''}
-            <div class="muted">专注 ${C.fmtDuration(focusTotal(p.id))} · 记录 ${notesOf(p.id).length} 条</div></div>
-          ${focusing ? '<span class="tag blue">专注中</span>' : f ? '' : `<button class="btn small ghost" data-act="focus-start" data-id="${p.id}">专注</button>`}
-        </div>`;
-      }).join('');
-    }
-    h += `</div>`;
+    h += `<div class="puzzle-head"><h1>一幅拼图，<br>一个要拿到的结果</h1>
+      <p class="lede">每拼上一块，就露出一块风景。先定下你最想拿到的那个结果。</p></div>
+      <div class="section"><button class="btn block" data-act="go" data-to="#/new-puzzle">新建主线拼图</button>
+      ${cfg().token ? '' : `<p class="faint" style="text-align:center;margin-top:12px">别的设备上已经有数据？<a class="link" href="#/settings">先开同步</a></p>`}</div>`;
+    return h;
   }
 
-  h += `<div class="muted" style="text-align:center;margin-top:4px">
-    <a class="link" href="#/scatter" style="color:${scat.length ? 'var(--warn)' : 'var(--faint)'}">今天新增散块 ${todayScatter}${scat.length > todayScatter ? `（共 ${scat.length}）` : ''}</a>
-    · 本周引领动作 ${lead.done}/${lead.target}
+  const pr = progress(m);
+  h += `<div class="puzzle-head"><h1>${esc(m.name)}</h1>
+    <p class="lede">${esc(daysLeft(m.deadline))}，${esc(m.acceptor)}说了算</p></div>
+  <div class="tray tap" style="margin-top:16px" data-act="go" data-to="#/puzzle/${m.id}" id="home-main">${jigsawSvg(m, { mini: true })}</div>
+  <p class="small" style="margin:10px 4px 0"><b class="num" style="color:var(--ink);font-size:17px">${pr.done}</b> / ${pr.total} 块已拼上</p>`;
+
+  h += `<div class="section" id="home-today"><div class="section-head"><h2>今天做这几块</h2>${today.length ? `<button class="link" data-act="pick-today">调整</button>` : ''}</div>`;
+  if (!today.length) {
+    h += `<div class="sheet pad"><p style="margin:0 0 14px;color:var(--ink-2)">开工前挑 1 到 3 块，今天只做这几块。</p>
+      <button class="btn" data-act="pick-today">挑今天的块</button></div>`;
+  } else {
+    h += `<div class="sheet">${today.map(p => {
+      const focusing = f?.pieceId === p.id;
+      return `<div class="row-item">
+        ${pieceArt(p)}
+        <div class="grow tap" data-act="go" data-to="#/piece/${p.id}"><div class="name ellipsis">${esc(p.name)}</div>
+          <div class="faint">${get(p.puzzleId)?.lane === 'side' ? '副线，' : ''}已专注 ${C.fmtDuration(focusTotal(p.id))}，记了 ${notesOf(p.id).length} 条</div></div>
+        ${focusing ? '<span class="state doing">专注中</span>' : f ? '' : `<button class="btn sm line" data-act="focus-start" data-id="${p.id}">专注</button>`}
+      </div>`;
+    }).join('')}</div>`;
+  }
+  h += `</div>`;
+
+  h += `<div class="meta-line">
+    <a href="#/scatter" class="${scat.length ? 'warn' : ''}">${scat.length ? `${scat.length} 条记录没归位` : '散块盒是空的'}</a>
+    <span>本周引领动作 <span class="num">${lead.done}/${lead.target}</span></span>
   </div>`;
 
   const rv = live('review').find(r => r.week === C.weekKey());
   if (new Date().getDay() === 0 && !rv?.done) {
-    h += `<div class="card tap" data-act="go" data-to="#/review" style="margin-top:14px">
-      <div class="label">SUNDAY · 周回顾</div><div class="title">今天是周回顾日，20 分钟</div>
-      <div class="desc">对账、清散块、抽卡自测、定下周预测。</div></div>`;
+    h += `<div class="section"><button class="btn block line" data-act="go" data-to="#/review">今天是周日，做 20 分钟周回顾</button></div>`;
   }
   return h;
 }
 
 // ================= 页面：拼图列表 / 详情 / 编辑 =================
 
-function puzzleCard(pz) {
+function puzzleRow(pz) {
   const pr = progress(pz);
-  return `<div class="card tap row" data-act="go" data-to="#/puzzle/${pz.id}">
-    <div class="grow">
-      <div class="label">${pz.lane === 'main' ? 'MAIN' : pz.lane === 'side' ? 'SIDE' : pz.lane.toUpperCase()} · ${LANES[pz.lane]}</div>
-      <div class="title ellipsis">${esc(pz.name)}</div>
-      <div class="desc">已拼 ${pr.done} / ${pr.total} · ${esc(daysLeft(pz.deadline))}</div>
-    </div>
-    <div style="width:76px;flex:none">${jigsawSvg(pz, { mini: true })}</div>
+  return `<div class="row-item tap" data-act="go" data-to="#/puzzle/${pz.id}">
+    <div style="width:64px;flex:none">${jigsawSvg(pz, { mini: true })}</div>
+    <div class="grow"><div class="name ellipsis">${esc(pz.name)}</div>
+      <div class="faint">${LANES[pz.lane]}，已拼 ${pr.done} / ${pr.total}${pz.deadline && ['main', 'side'].includes(pz.lane) ? '，' + esc(daysLeft(pz.deadline)) : ''}</div></div>
   </div>`;
 }
 
 function pagePuzzles() {
   const full = mainPuzzle() && sidePuzzle();
-  let h = top('拼图');
-  h += `<div style="margin-bottom:14px">
-    <button class="btn block" data-act="go" data-to="#/new-puzzle" ${full ? 'disabled' : ''} id="new-puzzle-btn">＋ 新建拼图</button>
-    ${full ? `<p class="muted" style="text-align:center;margin:6px 0 0">已有 1 幅主线 + 1 幅副线，先暂停或结束一幅再新建</p>` : ''}
-  </div>`;
+  let h = top('');
+  h += `<h1 style="margin:4px 2px 4px">拼图</h1><p class="lede" style="margin:0 2px 18px">同时最多一幅主线、一幅副线。</p>`;
   const act = puzzlesIn('main', 'side');
-  h += act.length ? act.map(puzzleCard).join('') : `<div class="card"><div class="desc">还没有在推进的拼图。</div></div>`;
+  h += `<div class="sheet">${act.length ? act.map(puzzleRow).join('') : '<div class="empty">还没有在推进的拼图。</div>'}</div>`;
+  h += `<div style="margin-top:14px"><button class="btn block ${act.length ? 'soft' : ''}" data-act="go" data-to="#/new-puzzle" ${full ? 'disabled' : ''} id="new-puzzle-btn">新建拼图</button>
+    ${full ? `<p class="faint" style="text-align:center;margin:8px 0 0">已有 1 幅主线 + 1 幅副线，先暂停或结束一幅再新建</p>` : ''}</div>`;
   const paused = puzzlesIn('paused');
-  if (paused.length) h += `<div class="section-h"><h3>暂停区</h3></div>` + paused.map(puzzleCard).join('');
+  if (paused.length) h += `<div class="section"><div class="section-head"><h2>暂停区</h2></div><div class="sheet">${paused.map(puzzleRow).join('')}</div></div>`;
   const done = puzzlesIn('done');
-  if (done.length) h += `<div class="section-h"><h3>已完成</h3></div>` + done.map(puzzleCard).join('');
+  if (done.length) h += `<div class="section"><div class="section-head"><h2>拼完的</h2></div><div class="sheet">${done.map(puzzleRow).join('')}</div></div>`;
   const stops = live('stopped').sort((a, b) => b.at - a.at);
-  h += `<div class="section-h"><h3>半途而废清单</h3><span class="muted">停或改的真实原因</span></div>
-    <div class="card">${stops.length ? stops.map(s => `<div class="piece-row"><span class="tag ${s.action === 'stop' ? '' : 'blue'}">${s.action === 'stop' ? '停' : '改'}</span>
-      <div class="name"><b>${esc(s.name)}</b><div class="desc pre">${esc(s.reason)}</div><div class="muted">${fmtTime(s.at)}</div></div></div>`).join('')
-      : '<div class="muted">还没有。停下或转向时，在这里写一句真实原因。</div>'}</div>`;
+  h += `<div class="section"><div class="section-head"><h2>半途而废清单</h2></div>
+    <div class="sheet">${stops.length ? stops.map(s => `<div class="row-item"><div class="grow">
+      <div class="name">${s.action === 'stop' ? '停了' : '换做法'}：${esc(s.name)}</div><div class="small pre">${esc(s.reason)}</div><div class="faint">${fmtTime(s.at)}</div></div></div>`).join('')
+      : '<div class="empty">停下或转向时，在这里写一句真实原因。</div>'}</div></div>`;
   return h;
 }
 
 function pagePuzzle(id) {
   const pz = get(id);
-  if (!pz) return top('拼图', { back: '#/puzzles' }) + '<div class="card">这幅拼图不存在了。</div>';
+  if (!pz) return top('拼图', { back: '#/puzzles' }) + '<div class="empty">这幅拼图不存在了。</div>';
   const ps = piecesOf(pz.id);
   const pr = progress(pz);
   const wk = C.weekKey();
-  let h = top(pz.name, { back: '#/puzzles' });
-  h += `<div class="card">
-    <div class="label">${LANES[pz.lane]} · 已拼 ${pr.done} / ${pr.total}</div>
-    <div style="margin:12px auto 4px;max-width:${Math.min(420, C.jigsaw(Math.max(1, ps.length)).cols * 110)}px">${jigsawSvg(pz)}</div>
-    <div class="desc" style="text-align:center">${esc(daysLeft(pz.deadline))} · 点一块进去</div>
-  </div>`;
+  let h = top(LANES[pz.lane], { back: '#/puzzles' });
+  h += `<div class="puzzle-head" style="margin-top:0"><h1>${esc(pz.name)}</h1>
+    <p class="lede">已拼 <span class="num">${pr.done} / ${pr.total}</span>，${esc(daysLeft(pz.deadline))}</p></div>
+  <div class="tray" style="margin-top:16px">${jigsawSvg(pz)}</div>
+  <p class="faint" style="text-align:center;margin:10px 0 0">点一块进去</p>`;
 
-  h += `<div class="card"><div class="label">GOAL · 目标</div>
-    ${C.PUZZLE_FIELDS.map(([k, label]) => `<div class="piece-row"><div class="muted" style="width:76px;flex:none">${label}</div><div class="name pre">${esc(pz[k])}</div></div>`).join('')}
-  </div>`;
+  h += `<div class="section"><div class="section-head"><h2>拼块</h2><span class="faint num">${ps.length} / ${C.MAX_PIECES}</span></div>
+    <div class="sheet">${ps.map(pieceRow).join('')}
+      <div class="row-item"><input type="text" id="new-piece" class="grow" placeholder="新拼块：写成一个能交出去的产出" ${ps.length >= C.MAX_PIECES ? 'disabled' : ''}>
+      <button class="btn sm" data-act="add-piece" data-pz="${pz.id}" ${ps.length >= C.MAX_PIECES ? 'disabled' : ''}>加一块</button></div>
+    </div>
+    ${ps.length >= C.MAX_PIECES ? '<p class="faint">已到 24 块：目标太大，拆成两幅拼图吧。</p>' : ''}</div>`;
 
-  h += `<div class="card"><div class="label">LEAD · 本周引领动作</div>
+  h += `<div class="section"><div class="section-head"><h2>这周的引领动作</h2></div><div class="sheet">
     ${(pz.leads || []).map(l => {
       const n = leadCount(l, wk), t = Number(l.target) || 1;
-      return `<div class="piece-row"><div class="name">${esc(l.name)}<div class="muted">本周 ${n} / ${t}</div></div>
-        <button class="btn small plain" data-act="lead-minus" data-pz="${pz.id}" data-lead="${l.id}" ${n ? '' : 'disabled'}>−</button>
-        <button class="btn small ${n >= t ? 'ghost' : ''}" data-act="lead-plus" data-pz="${pz.id}" data-lead="${l.id}">＋1</button></div>`;
-    }).join('')}
-  </div>`;
+      return `<div class="row-item"><div class="grow"><div class="name">${esc(l.name)}</div><div class="faint">本周 <span class="num">${n} / ${t}</span>${n >= t ? '，做够了' : ''}</div></div>
+        <button class="btn sm soft" data-act="lead-minus" data-pz="${pz.id}" data-lead="${l.id}" ${n ? '' : 'disabled'} aria-label="减一次">−</button>
+        <button class="btn sm ${n >= t ? 'soft' : ''}" data-act="lead-plus" data-pz="${pz.id}" data-lead="${l.id}">做了一次</button></div>`;
+    }).join('')}</div></div>`;
 
-  h += `<div class="card"><div class="label">IF-THEN · 被打断时</div>
-    ${(pz.ifThens || []).map(s => `<div class="piece-row"><div class="name pre desc">${esc(s)}</div></div>`).join('')}
-  </div>`;
+  h += `<div class="section"><div class="section-head"><h2>被打断时</h2></div><div class="sheet">
+    ${(pz.ifThens || []).map(s => `<div class="row-item"><div class="grow small pre" style="color:var(--ink)">${esc(s)}</div></div>`).join('')}</div></div>`;
 
-  h += `<div class="card"><div class="label" style="display:flex;justify-content:space-between"><span>PIECES · 拼块</span><span>${ps.length} / ${C.MAX_PIECES}</span></div>
-    ${ps.map((p, i) => pieceRow(p, i)).join('')}
-    <div class="row" style="margin-top:10px">
-      <input type="text" id="new-piece" class="grow" placeholder="新拼块：写成一个能交出去的产出" ${ps.length >= C.MAX_PIECES ? 'disabled' : ''}>
-      <button class="btn small" data-act="add-piece" data-pz="${pz.id}" ${ps.length >= C.MAX_PIECES ? 'disabled' : ''}>添加</button>
-    </div>
-    ${ps.length >= C.MAX_PIECES ? '<p class="muted">已到 24 块：目标太大，考虑拆成两幅拼图。</p>' : ''}
-  </div>`;
+  h += `<div class="section"><div class="section-head"><h2>目标</h2><button class="link" data-act="go" data-to="#/edit-puzzle/${pz.id}">编辑</button></div>
+    <dl class="sheet" style="margin:0">${C.PUZZLE_FIELDS.map(([k, label]) => `<div class="kv"><dt>${label}</dt><dd>${esc(pz[k])}</dd></div>`).join('')}</dl></div>`;
 
-  const btns = [`<button class="btn plain small" data-act="go" data-to="#/edit-puzzle/${pz.id}">编辑</button>`];
-  if (pz.lane === 'side') btns.push(`<button class="btn ghost small" data-act="lane" data-id="${pz.id}" data-lane="main">设为主线</button>`);
+  const btns = [];
+  if (pz.lane === 'side') btns.push(`<button class="btn sm line" data-act="lane" data-id="${pz.id}" data-lane="main">设为主线</button>`);
   if (['main', 'side'].includes(pz.lane)) {
-    btns.push(`<button class="btn plain small" data-act="lane" data-id="${pz.id}" data-lane="paused">放进暂停区</button>`);
-    btns.push(`<button class="btn ghost small" data-act="lane" data-id="${pz.id}" data-lane="done">宣布完成</button>`);
-    btns.push(`<button class="btn danger small" data-act="stop-dialog" data-id="${pz.id}">停或改</button>`);
+    btns.push(`<button class="btn sm line" data-act="lane" data-id="${pz.id}" data-lane="done">宣布完成</button>`);
+    btns.push(`<button class="btn sm soft" data-act="lane" data-id="${pz.id}" data-lane="paused">放进暂停区</button>`);
+    btns.push(`<button class="btn sm warn" data-act="stop-dialog" data-id="${pz.id}">停下或换做法</button>`);
   } else {
-    btns.push(`<button class="btn ghost small" data-act="lane" data-id="${pz.id}" data-lane="resume">恢复推进</button>`);
+    btns.push(`<button class="btn sm line" data-act="lane" data-id="${pz.id}" data-lane="resume">恢复推进</button>`);
   }
-  h += `<div class="btns">${btns.join('')}</div>`;
+  h += `<div class="section btns">${btns.join('')}</div>`;
   return h;
 }
 
 function pageEditPuzzle(id) {
   const editing = id ? get(id) : null;
   if (!editing && mainPuzzle() && sidePuzzle()) {
-    return top('新建拼图', { back: '#/puzzles' }) + `<div class="card"><div class="err-box">已有 1 幅主线 + 1 幅副线。先把一幅放进暂停区或宣布完成 / 停止，再新建。</div>
-      <button class="btn" data-act="go" data-to="#/puzzles">回拼图页</button></div>`;
+    return top('新建拼图', { back: '#/puzzles' }) + `<div class="notice bad">已有 1 幅主线 + 1 幅副线。先把一幅放进暂停区或宣布完成 / 停下，再新建。</div>
+      <button class="btn" data-act="go" data-to="#/puzzles">回拼图页</button>`;
   }
   const d = editing || {
     name: '', deliverable: '', deadline: '', acceptor: '', value: '', stopRule: C.DEFAULT_STOP_RULE,
@@ -525,24 +538,27 @@ function pageEditPuzzle(id) {
   while (ifs.length < 3) ifs.push('');
   const ph = { deliverable: '例：第一位客户确认试用并付第一笔费用', acceptor: '例：客户本人', value: '例：每位客户 ¥300 / 学期' };
   let h = top(editing ? '编辑拼图' : `新建${LANES[lane]}拼图`, { back: editing ? `#/puzzle/${id}` : '#/puzzles' });
-  h += `<div id="form-err"></div><div class="card">
-    <div class="field"><label>拼图名称</label><input type="text" id="f-name" value="${esc(d.name)}" placeholder="一句话说清这幅拼图"></div>
-    ${C.PUZZLE_FIELDS.map(([k, label, hint]) => `<div class="field"><label>${label}<span class="hint">${hint}</span></label>
+  h += `<h1 style="margin:4px 2px 6px">${editing ? '改一改这幅拼图' : '你要拿到什么结果？'}</h1>
+    <p class="lede" style="margin:0 2px 18px">五项都要写，缺一项就开始不了。</p>
+    <div id="form-err"></div>
+    <div class="sheet pad">
+    <div class="field"><label for="f-name">拼图名称</label><input type="text" id="f-name" value="${esc(d.name)}" placeholder="一句话说清这幅拼图"></div>
+    ${C.PUZZLE_FIELDS.map(([k, label, hint]) => `<div class="field"><label for="f-${k}">${label}<span class="hint">${hint}</span></label>
       ${k === 'deadline' ? `<input type="date" id="f-${k}" value="${esc(d[k])}">` : `<input type="text" id="f-${k}" value="${esc(d[k])}" placeholder="${esc(ph[k] || '')}">`}</div>`).join('')}
   </div>
-  <div class="card"><div class="label">LEAD · 每周引领动作（2–3 个，自己能控制、能计数）</div>
-    ${leads.slice(0, 3).map((l, i) => `<div class="row" style="margin-top:10px">
-      <input type="text" class="grow" id="f-lead-${i}" data-lid="${esc(l.id)}" value="${esc(l.name)}" placeholder="${i === 0 ? '例：每周约 2 位客户看演示' : i === 1 ? '例：每周发 3 份报价' : '可不填'}">
-      <input type="number" id="f-lead-t-${i}" value="${esc(l.target || 1)}" min="1" max="50" style="width:72px" aria-label="每周次数"><span class="muted">次/周</span></div>`).join('')}
-  </div>
-  <div class="card"><div class="label">IF-THEN · 3 条「如果被××打断，我就××」</div>
-    ${ifs.slice(0, 3).map((s, i) => `<div class="field" style="margin:10px 0 0"><textarea id="f-if-${i}" rows="2" placeholder="${['如果有人临时找我做别的，我就先记进散块盒，主线 2 小时做完再处理', '如果卡住超过半天，我就先做不依赖它的块', '如果刷手机超过 15 分钟，我就打开拼图看今天的块'][i]}">${esc(s)}</textarea></div>`).join('')}
-  </div>`;
+  <div class="section"><div class="section-head"><h2>每周引领动作</h2><span class="faint">2 到 3 个，自己能控制、能计数</span></div><div class="sheet pad">
+    ${leads.slice(0, 3).map((l, i) => `<div class="btns" style="flex-wrap:nowrap;align-items:center;${i ? 'margin-top:10px' : ''}">
+      <input type="text" style="flex:1;min-width:0" id="f-lead-${i}" data-lid="${esc(l.id)}" value="${esc(l.name)}" placeholder="${i === 0 ? '例：每周约 2 位客户看演示' : i === 1 ? '例：每周发 3 份报价' : '可以不填'}">
+      <input type="number" id="f-lead-t-${i}" value="${esc(l.target || 1)}" min="1" max="50" style="width:64px;flex:none" aria-label="每周次数"><span class="faint" style="flex:none">次/周</span></div>`).join('')}
+  </div></div>
+  <div class="section"><div class="section-head"><h2>被打断时怎么办</h2><span class="faint">写 3 条</span></div><div class="sheet pad">
+    ${ifs.slice(0, 3).map((s, i) => `<div class="field" style="${i === 2 ? 'margin:0' : ''}"><textarea id="f-if-${i}" rows="2" aria-label="第 ${i + 1} 条" placeholder="${['如果有人临时找我做别的，我就先记进散块盒，主线 2 小时做完再处理', '如果卡住超过半天，我就先做不依赖它的块', '如果刷手机超过 15 分钟，我就打开拼图看今天的块'][i]}">${esc(s)}</textarea></div>`).join('')}
+  </div></div>`;
   if (!editing) {
-    h += `<div class="card"><div class="label">PIECES · 先拆几块（每行一块，可以以后再加）</div>
-      <textarea id="f-pieces" rows="5" style="margin-top:10px" placeholder="每块写成一个能交出去的产出，例如：&#10;报价单&#10;第一次演示录屏"></textarea></div>`;
+    h += `<div class="section"><div class="section-head"><h2>先拆几块</h2><span class="faint">一行一块，以后还能加</span></div>
+      <div class="sheet pad"><textarea id="f-pieces" rows="5" aria-label="拼块" placeholder="每块写成一个能交出去的产出，例如：&#10;报价单&#10;第一次演示录屏"></textarea></div></div>`;
   }
-  h += `<button class="btn block" data-act="save-puzzle" data-id="${editing ? editing.id : ''}" data-lane="${lane}">${editing ? '保存' : '开始这幅拼图'}</button>`;
+  h += `<div class="section"><button class="btn block" data-act="save-puzzle" data-id="${editing ? editing.id : ''}" data-lane="${lane}">${editing ? '保存' : '开始这幅拼图'}</button></div>`;
   return h;
 }
 
@@ -550,103 +566,100 @@ function pageEditPuzzle(id) {
 
 function pagePiece(id) {
   const p = get(id);
-  if (!p) return top('拼块', { back: '#/' }) + '<div class="card">这块不存在了。</div>';
+  if (!p) return top('拼块', { back: '#/' }) + '<div class="empty">这块不存在了。</div>';
   const pz = get(p.puzzleId);
   const idx = piecesOf(p.puzzleId).findIndex(x => x.id === id);
   const st = pieceState(p);
   const f = activeFocus();
   const notes = notesOf(id);
   const ev = p.evidence || [];
-  let h = top(`第 ${idx + 1} 块`, { back: pz ? `#/puzzle/${pz.id}` : '#/' });
+  let h = top(pz?.name || '', { back: pz ? `#/puzzle/${pz.id}` : '#/' });
   if (f && f.pieceId === id) h += focusBar(f);
-  h += `<div class="card">
-    <div class="label">PIECE ${String(idx + 1).padStart(2, '0')} · ${esc(pz?.name || '')}</div>
-    <div class="title">${esc(p.name)} <button class="link" data-act="rename-piece" data-id="${id}">改名</button></div>
-    <div class="row" style="margin:6px 0 12px"><span class="tag ${st === 'done' ? 'done' : st === 'doing' ? 'blue' : ''}">${PIECE_STATE[st]}</span>
-      <span class="muted">专注 ${C.fmtDuration(focusTotal(id))}</span></div>
-    ${p.status === 'done' ? '' : `<div class="btns">
-      ${isToday(p) ? `<button class="btn plain small" data-act="today-off" data-id="${id}">移出今天</button>` : `<button class="btn ghost small" data-act="today-on" data-id="${id}">加入今天</button>`}
-      ${f ? '' : `<button class="btn small" data-act="focus-start" data-id="${id}">开始专注 2 小时</button>`}
-    </div>`}
+  h += pieceArt(p, { big: true });
+  h += `<div style="text-align:center;margin:0 8px">
+    <div class="faint">第 ${idx + 1} 块，${PIECE_STATE[st]}</div>
+    <h1 style="margin-top:4px">${esc(p.name)}</h1>
+    <p class="small" style="margin:6px 0 0">专注 ${C.fmtDuration(focusTotal(id))} <button class="link quiet" style="margin-left:10px" data-act="rename-piece" data-id="${id}">改名</button></p>
   </div>`;
+  if (p.status !== 'done') {
+    h += `<div class="btns" style="justify-content:center;margin-top:16px">
+      ${f ? '' : `<button class="btn" data-act="focus-start" data-id="${id}">开始专注 2 小时</button>`}
+      ${isToday(p) ? `<button class="btn soft" data-act="today-off" data-id="${id}">移出今天</button>` : `<button class="btn line" data-act="today-on" data-id="${id}">加入今天</button>`}
+    </div>`;
+  }
 
-  h += `<div class="card"><div class="label" style="display:flex;justify-content:space-between"><span>NOTES · 随手记 ${notes.length}</span><button class="link" data-act="note" data-piece="${id}">记一句</button></div>
-    ${notes.length ? notes.map(n => `<div class="piece-row"><div class="name"><div class="pre">${esc(n.text)}</div><div class="muted">${fmtTime(n.at)}${n.feedback ? ' · 外部反馈' : ''}</div></div></div>`).join('') : '<div class="muted" style="margin-top:6px">做的时候随手记一句，拼上时写经验卡会用到。</div>'}
-  </div>`;
-
-  h += `<div class="card" id="evidence"><div class="label">EVIDENCE · 证据（拼上必须有一项）</div>
-    ${ev.length ? ev.map(e => evidenceRow(p, e)).join('') : '<div class="muted" style="margin-top:6px">链接、图片、文件、收款截图，至少一项。</div>'}
-    <div class="btns" style="margin-top:12px">
-      <button class="btn plain small" data-act="evi-link" data-id="${id}">＋ 链接</button>
-      <label class="btn plain small">＋ 图片<input type="file" accept="image/*" hidden data-change="evi-image" data-id="${id}"></label>
-      <label class="btn plain small">＋ 文件<input type="file" hidden data-change="evi-file" data-id="${id}"></label>
-      <button class="btn plain small" data-act="evi-income" data-id="${id}">＋ 收款</button>
-    </div>
-  </div>`;
+  h += `<div class="section" id="evidence"><div class="section-head"><h2>证据</h2><span class="faint">拼上前至少附一项</span></div>
+    <div class="sheet">${ev.length ? ev.map(e => evidenceRow(p, e)).join('') : '<div class="empty">链接、图片、文件或收款，能让别人看见这块确实做出来了。</div>'}</div>
+    <div class="btns" style="margin-top:10px">
+      <button class="btn sm soft" data-act="evi-link" data-id="${id}">加链接</button>
+      <label class="btn sm soft">加图片<input type="file" accept="image/*" hidden data-change="evi-image" data-id="${id}"></label>
+      <label class="btn sm soft">加文件<input type="file" hidden data-change="evi-file" data-id="${id}"></label>
+      <button class="btn sm soft" data-act="evi-income" data-id="${id}">记一笔收款</button>
+    </div></div>`;
 
   if (p.status === 'done') {
     const card = cardOf(id);
-    h += `<div class="card"><div class="label">PLACED · 已拼上</div>
-      <div class="desc">${fmtTime(p.doneAt)}</div>
-      <div class="btns" style="margin-top:10px">${card ? `<button class="btn" data-act="go" data-to="#/card/${card.id}">经验卡 · ${STAGES[card.stage]}</button>` : ''}
-      <button class="btn plain small" data-act="unplace" data-id="${id}">撤销拼上</button></div></div>`;
+    h += `<div class="section"><div class="notice good">${fmtTime(p.doneAt)} 拼上</div>
+      <div class="btns">${card ? `<button class="btn" data-act="go" data-to="#/card/${card.id}">经验卡：${STAGES[card.stage]}</button>` : ''}
+      <button class="btn soft" data-act="unplace" data-id="${id}">撤销拼上</button></div></div>`;
   } else {
-    h += `<button class="btn block" id="place-btn" data-act="place" data-id="${id}" ${ev.length ? '' : 'disabled'}>拼上这一块</button>
-      ${ev.length ? '' : '<p class="muted" style="text-align:center;margin-top:6px">先附一个证据</p>'}`;
+    h += `<div class="section"><button class="btn block" id="place-btn" data-act="place" data-id="${id}" ${ev.length ? '' : 'disabled'}>拼上这一块</button>
+      ${ev.length ? '' : '<p class="faint" style="text-align:center;margin-top:8px">先附一个证据</p>'}</div>`;
   }
-  h += `<p style="text-align:center;margin-top:18px"><button class="link" style="color:var(--faint)" data-act="delete-piece" data-id="${id}">删除这块</button></p>`;
+
+  h += `<div class="section"><div class="section-head"><h2>随手记</h2><button class="link" data-act="note" data-piece="${id}">记一句</button></div>
+    <div class="sheet">${notes.length ? notes.map(n => `<div class="row-item"><div class="grow"><div class="pre">${esc(n.text)}</div><div class="faint">${fmtTime(n.at)}${n.feedback ? '，外部反馈' : ''}</div></div></div>`).join('') : '<div class="empty">做的时候随手记一句，拼上后写经验卡会用到。</div>'}</div></div>`;
+  h += `<p style="text-align:center;margin-top:26px"><button class="link quiet" data-act="delete-piece" data-id="${id}">删除这块</button></p>`;
   return h;
 }
 
 function evidenceRow(p, e) {
-  const del = `<button class="link" style="color:var(--faint)" data-act="evi-del" data-id="${p.id}" data-eid="${e.id}">删除</button>`;
-  const when = `<div class="muted">${fmtTime(e.at)}</div>`;
-  if (e.kind === 'link') return `<div class="evi"><div class="ico">🔗</div><div class="grow" style="min-width:0"><a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.note || e.url)}</a>${when}</div>${del}</div>`;
-  if (e.kind === 'image') return `<div class="evi"><img data-file="${esc(e.fileId)}" alt="证据图片"><div class="grow">${esc(e.note || '图片')}${when}</div>${del}</div>`;
-  if (e.kind === 'file') return `<div class="evi"><div class="ico">📄</div><div class="grow" style="min-width:0"><a data-file="${esc(e.fileId)}" download="${esc(e.name)}">${esc(e.name)}</a>${when}</div>${del}</div>`;
-  return `<div class="evi">${e.fileId ? `<img data-file="${esc(e.fileId)}" alt="收款截图">` : '<div class="ico">¥</div>'}<div class="grow"><b>收款 ¥${esc(e.amount)}</b> ${esc(e.note || '')}${when}</div>${del}</div>`;
+  const del = `<button class="link quiet" data-act="evi-del" data-id="${p.id}" data-eid="${e.id}">删除</button>`;
+  const when = `<div class="faint">${fmtTime(e.at)}</div>`;
+  if (e.kind === 'link') return `<div class="row-item evi"><div class="ico">链接</div><div class="grow"><a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.note || e.url)}</a>${when}</div>${del}</div>`;
+  if (e.kind === 'image') return `<div class="row-item evi"><img data-file="${esc(e.fileId)}" alt="证据图片"><div class="grow">${esc(e.note || '图片')}${when}</div>${del}</div>`;
+  if (e.kind === 'file') return `<div class="row-item evi"><div class="ico">文件</div><div class="grow"><a data-file="${esc(e.fileId)}" download="${esc(e.name)}">${esc(e.name)}</a>${when}</div>${del}</div>`;
+  return `<div class="row-item evi">${e.fileId ? `<img data-file="${esc(e.fileId)}" alt="收款截图">` : '<div class="ico">¥</div>'}<div class="grow"><b>收款 ¥${esc(e.amount)}</b> ${esc(e.note || '')}${when}</div>${del}</div>`;
 }
 
 // ================= 页面：散块盒 =================
 
 function scatterItem(n) {
-  return `<div class="card scatter">${singleSvg()}
-    <div class="pre">${esc(n.text)}</div><div class="muted">${fmtTime(n.at)}${n.feedback ? ' · 外部反馈' : ''}</div>
-    <div class="btns" style="margin-top:10px">
-      <button class="btn small ghost" data-act="scatter-attach" data-id="${n.id}">挂到某块</button>
-      <button class="btn small plain" data-act="scatter-upgrade" data-id="${n.id}">升级成新拼块</button>
-      <button class="btn small plain" data-act="scatter-del" data-id="${n.id}">删除</button>
-    </div></div>`;
+  return `<div class="row-item" style="align-items:flex-start">${pcIcon('loose')}
+    <div class="grow"><div class="pre">${esc(n.text)}</div><div class="faint">${fmtTime(n.at)}${n.feedback ? '，外部反馈' : ''}</div>
+      <div class="btns" style="margin-top:10px">
+        <button class="btn sm line" data-act="scatter-attach" data-id="${n.id}">挂到某块</button>
+        <button class="btn sm soft" data-act="scatter-upgrade" data-id="${n.id}">变成新拼块</button>
+        <button class="btn sm soft" data-act="scatter-del" data-id="${n.id}">删除</button>
+      </div></div></div>`;
 }
 
 function pageScatter() {
   const list = scatterNotes();
-  let h = top('散块盒', { back: '#/' });
-  h += `<p class="desc" style="margin:0 4px 14px">挂不到任何一块上的记录。它们就是偏离的地方：每周清空一次。</p>`;
-  h += list.length ? list.map(scatterItem).join('') : '<div class="card"><div class="desc">散块盒是空的 ✓</div></div>';
+  let h = top('', { back: '#/' });
+  h += `<h1 style="margin:4px 2px 6px">散块盒</h1>
+    <p class="lede" style="margin:0 2px 18px">挂不到任何一块上的记录，就是偏离的地方。每周清空一次。</p>`;
+  h += `<div class="sheet">${list.length ? list.map(scatterItem).join('') : '<div class="empty">空的，这周没有跑偏。</div>'}</div>`;
   return h;
 }
 
 // ================= 页面：经验卡 =================
 
-function stepGuide() {
-  return STEPS.map(([lab, title, desc]) => `<div class="card"><div class="label">${lab}</div><div class="title">${title}</div><div class="desc">${desc}</div></div>`).join('');
-}
-
 function pageCards() {
   const filter = state.ui.cardFilter || 'all';
-  const cards = live('card').filter(c => filter === 'all' || c.stage === filter).sort((a, b) => b.updatedAt - a.updatedAt);
-  let h = top('经验卡');
-  h += `<div class="hero"><h2>以输出倒逼输入<br>用实践校准认知</h2><div class="label">DAILY WORKFLOW</div></div>`;
-  if (!state.ui.hideGuide) h += stepGuide() + `<p style="text-align:center;margin:-4px 0 10px"><button class="link" data-act="hide-guide">收起说明</button></p>`;
-  else h += `<p style="text-align:center;margin:-8px 0 10px"><button class="link" data-act="show-guide">展开「做 · 卡 · 讲 · 送」说明</button></p>`;
-  h += `<div style="margin:6px 0 10px">${[['all', '全部'], ...Object.entries(STAGES)].map(([k, v]) =>
-    `<span class="chip ${filter === k ? 'on' : ''}" data-act="card-filter" data-f="${k}">${v} ${k === 'all' ? live('card').length : live('card').filter(c => c.stage === k).length}</span>`).join('')}</div>`;
-  h += cards.length ? cards.map(c => `<div class="card tap" data-act="go" data-to="#/card/${c.id}">
-      <div class="label">${STAGES[c.stage]} · ${esc(get(c.puzzleId)?.name || '')}</div>
-      <div class="title">${esc(c.title)}</div>
-      <div class="desc ellipsis">${esc(c.cells?.core || '还没提炼')}</div></div>`).join('')
-    : '<div class="card"><div class="desc">拼上一块，就会在这里出现一张经验卡。</div></div>';
+  const all = live('card');
+  const cards = all.filter(c => filter === 'all' || c.stage === filter).sort((a, b) => b.updatedAt - a.updatedAt);
+  const open = state.ui.glyph;
+  let h = top('');
+  h += `<div class="motto"><h1>以输出倒逼输入，<br>用实践校准认知</h1></div>
+    <div class="glyphs">${STEPS.map(([ch, title], i) => `<button class="glyph" data-act="glyph" data-i="${i}" aria-expanded="${open === i}" style="${open === i ? 'box-shadow:inset 0 0 0 2px var(--ink)' : ''}"><b>${ch}</b><span>${title}</span></button>`).join('')}</div>
+    ${open != null ? `<div class="glyph-detail sheet pad"><p><b>${STEPS[open][0]}</b>${STEPS[open][2]}</p></div>` : ''}`;
+  h += `<div class="section"><div style="margin-bottom:6px">${[['all', '全部'], ...Object.entries(STAGES)].map(([k, v]) =>
+    `<button class="chip ${filter === k ? 'on' : ''}" data-act="card-filter" data-f="${k}">${v} <span class="num">${k === 'all' ? all.length : all.filter(c => c.stage === k).length}</button></button>`).join('')}</div>`;
+  h += `<div class="sheet">${cards.length ? cards.map(c => `<div class="row-item tap card-row" data-act="go" data-to="#/card/${c.id}">
+      <div class="grow"><div class="name">${esc(c.title)}</div><div class="core ellipsis">${esc(c.cells?.core || '还没提炼')}</div></div>
+      <span class="state ${c.stage === 'library' ? 'done' : c.stage === 'draft' ? '' : 'doing'}">${STAGES[c.stage]}</span></div>`).join('')
+    : '<div class="empty">拼上一块，这里就会多一张经验卡。</div>'}</div></div>`;
   return h;
 }
 
@@ -654,61 +667,53 @@ let recorder = null;
 
 function pageCard(id) {
   const c = get(id);
-  if (!c) return top('经验卡', { back: '#/cards' }) + '<div class="card">这张卡不存在了。</div>';
+  if (!c) return top('经验卡', { back: '#/cards' }) + '<div class="empty">这张卡不存在了。</div>';
   const p = get(c.pieceId);
   const reach = STAGE_STEP[c.stage];
   const cur = state.ui.cardStep[id] ?? reach;
-  let h = top('经验卡', { back: '#/cards' });
-  h += `<div class="hero" style="padding-bottom:12px"><div class="label" style="color:var(--faint)">${esc(get(c.puzzleId)?.name || '')}</div><h2 style="font-size:20px">${esc(c.title)}</h2>
-    <div style="margin-top:6px"><span class="tag blue" id="card-stage">${STAGES[c.stage]}</span></div></div>`;
-  STEPS.forEach(([lab, title, desc], i) => {
-    const cls = i === cur ? 'cur' : i <= reach ? 'passed' : '';
-    const can = i <= reach;
-    h += `<div class="card step ${cls}" data-step="${i}">
-      <div class="${can ? 'tap' : ''}" ${can && i !== cur ? `data-act="card-step" data-id="${id}" data-i="${i}"` : ''}>
-        <div class="label"><span>${lab}</span><span>${i < reach ? '✓' : ''}</span></div>
-        <div class="title">${title}</div><div class="desc">${desc}</div>
-      </div>
-      ${i === cur ? `<div class="step-body">${cardStepBody(c, p, i)}</div>` : ''}
-    </div>`;
-  });
+  let h = top(get(c.puzzleId)?.name || '经验卡', { back: '#/cards' });
+  h += `<div style="margin:0 2px 18px"><h1>${esc(c.title)}</h1>
+    <p class="lede"><span id="card-stage">${STAGES[c.stage]}</span></p></div>`;
+  h += `<div class="stepper">${STEPS.map(([ch, title], i) => `<button class="step ${i === cur ? 'cur' : i <= reach ? 'passed' : ''}" data-step="${i}"
+      ${i <= reach && i !== cur ? `data-act="card-step" data-id="${id}" data-i="${i}"` : ''} ${i > reach ? 'disabled' : ''} aria-label="${ch}：${title}"><b>${ch}</b><span>${i < reach ? '做完了' : i === cur ? '现在' : i <= reach ? '可回看' : '还没到'}</span></button>`).join('')}</div>`;
+  h += `<div class="step-intro"><h2>${STEPS[cur][0]}，${STEPS[cur][1]}</h2><p>${STEPS[cur][2]}</p></div>`;
+  h += `<div class="sheet pad">${cardStepBody(c, p, cur)}</div>`;
   return h;
 }
 
 function cardStepBody(c, p, i) {
   if (i === 0) {
     const notes = p ? notesOf(p.id) : [];
-    return `<div class="desc">这一块专注了 <b>${C.fmtDuration(p ? focusTotal(p.id) : 0)}</b>，随手记 ${notes.length} 条：</div>
-      ${notes.map(n => `<div class="cell" style="margin-top:8px"><div>${esc(n.text)}</div><span class="muted">${fmtTime(n.at)}</span></div>`).join('') || '<div class="muted">没有记录。</div>'}
-      <button class="btn block" style="margin-top:12px" data-act="card-step" data-id="${c.id}" data-i="1">去提炼卡片</button>`;
+    return `<p style="margin:0 0 12px">这一块专注了 <b>${C.fmtDuration(p ? focusTotal(p.id) : 0)}</b>，随手记了 ${notes.length} 条。</p>
+      <div class="cells">${notes.map(n => `<div class="cell"><div>${esc(n.text)}</div><span class="faint">${fmtTime(n.at)}</span></div>`).join('')}</div>
+      <button class="btn block" style="margin-top:14px" data-act="card-step" data-id="${c.id}" data-i="1">去提炼卡片</button>`;
   }
   if (i === 1) {
-    return `<div class="field"><label>卡片标题</label><input type="text" id="c-title" value="${esc(c.title)}"></div>
-      <div class="label" style="margin:4px 0 8px">先复盘：四个问题</div>
-      ${C.AAR.map(([k, q]) => `<div class="field"><label>${q}</label><textarea id="c-aar-${k}" rows="2">${esc(c.aar?.[k])}</textarea></div>`).join('')}
-      <div class="label" style="margin:14px 0 8px">再提炼：四格</div>
-      ${C.CARD_CELLS.map(([k, l, hint]) => `<div class="field"><label>${l}<span class="hint">${hint}</span></label><textarea id="c-cell-${k}" rows="2">${esc(c.cells?.[k])}</textarea></div>`).join('')}
+    return `<div class="field"><label for="c-title">卡片标题</label><input type="text" id="c-title" value="${esc(c.title)}"></div>
+      <h2 style="font-size:16px;margin:22px 0 12px">先复盘</h2>
+      ${C.AAR.map(([k, q]) => `<div class="field"><label for="c-aar-${k}">${q}</label><textarea id="c-aar-${k}" rows="2">${esc(c.aar?.[k])}</textarea></div>`).join('')}
+      <h2 style="font-size:16px;margin:22px 0 12px">再提炼四格</h2>
+      ${C.CARD_CELLS.map(([k, l, hint]) => `<div class="field"><label for="c-cell-${k}">${l}<span class="hint">${hint}</span></label><textarea id="c-cell-${k}" rows="2">${esc(c.cells?.[k])}</textarea></div>`).join('')}
       <button class="btn block" data-act="card-save" data-id="${c.id}">保存</button>
-      <p class="muted" style="text-align:center;margin-top:6px">四格有一格空着就存为草稿。写不清 = 没学透。</p>`;
+      <p class="faint" style="text-align:center;margin:8px 0 0">四格有一格空着，就先存成草稿。</p>`;
   }
   if (i === 2) {
     const rec = recorder?.cardId === c.id;
-    return `<div class="desc">合上手机，不看稿讲一遍：痛点 → 原理 → 步骤 → 行动。录下来，回放时找卡壳的地方。</div>
-      <div style="margin:12px 0">${rec
-        ? `<button class="btn danger block" data-act="rec-stop"><span class="rec-dot"></span>停止录音 <span data-rec-clock>0:00:00</span></button>`
-        : `<button class="btn ghost block" data-act="rec-start" data-id="${c.id}">🎙 ${c.audioFileId ? '重新录一遍' : '开始录音'}（最长 10 分钟）</button>`}</div>
+    return `<p style="margin:0 0 14px">合上手机，对着空气讲一遍，录下来，回放时找卡壳的地方。</p>
+      ${rec
+        ? `<button class="btn warn block" data-act="rec-stop"><span class="rec-dot"></span>停止录音 <span data-rec-clock class="num">0:00:00</span></button>`
+        : `<button class="btn line block" data-act="rec-start" data-id="${c.id}">${c.audioFileId ? '重新录一遍' : '开始录音'}（最长 10 分钟）</button>`}
       ${c.audioFileId ? `<audio controls data-file="${esc(c.audioFileId)}"></audio>` : ''}
-      <div class="field" style="margin-top:12px"><label>卡壳的地方<span class="hint">每个卡壳点就是一个认知漏洞</span></label><textarea id="c-gaps" rows="3">${esc(c.gaps)}</textarea></div>
+      <div class="field" style="margin-top:18px"><label for="c-gaps">卡壳的地方<span class="hint">每个卡壳点都是一个漏洞</span></label><textarea id="c-gaps" rows="3">${esc(c.gaps)}</textarea></div>
       <button class="btn block" data-act="card-told" data-id="${c.id}">讲完了，去补漏洞</button>`;
   }
-  return `${c.gaps ? `<div class="cell" style="margin-bottom:12px"><b>上次卡壳的地方</b><div>${esc(c.gaps)}</div></div>` : ''}
-    <div class="desc" style="margin-bottom:10px">按卡壳的地方改写四格，精简表达。每次保存留一个历史版本。</div>
-    ${C.CARD_CELLS.map(([k, l]) => `<div class="field"><label>${l}</label><textarea id="c-cell-${k}" rows="2">${esc(c.cells?.[k])}</textarea></div>`).join('')}
+  return `${c.gaps ? `<div class="cell" style="margin-bottom:16px"><b>上次卡壳的地方</b><div>${esc(c.gaps)}</div></div>` : ''}
+    ${C.CARD_CELLS.map(([k, l]) => `<div class="field"><label for="c-cell-${k}">${l}</label><textarea id="c-cell-${k}" rows="2">${esc(c.cells?.[k])}</textarea></div>`).join('')}
     <div class="btns"><button class="btn" data-act="card-version" data-id="${c.id}">保存新版本</button>
-      ${c.stage === 'library' ? '<span class="tag done" style="align-self:center">已入库</span>' : `<button class="btn ghost" data-act="card-library" data-id="${c.id}">标记为已入库</button>`}
-      <button class="btn plain" data-act="card-copy" data-id="${c.id}">复制成文字</button></div>
-    ${(c.versions || []).length ? `<details style="margin-top:14px"><summary class="muted">历史版本 ${c.versions.length}</summary>
-      ${c.versions.slice().reverse().map(v => `<div class="cell" style="margin-top:8px"><span class="muted">${fmtTime(v.at)}</span>
+      ${c.stage === 'library' ? '<span class="state done" style="align-self:center">已入库</span>' : `<button class="btn line" data-act="card-library" data-id="${c.id}">标记为已入库</button>`}
+      <button class="btn soft" data-act="card-copy" data-id="${c.id}">复制成文字</button></div>
+    ${(c.versions || []).length ? `<details style="margin-top:18px"><summary class="small">历史版本 ${c.versions.length} 个</summary>
+      ${c.versions.slice().reverse().map(v => `<div class="cell" style="margin-top:8px"><span class="faint">${fmtTime(v.at)}</span>
         ${C.CARD_CELLS.map(([k, l]) => `<div><b style="display:inline">${l}：</b>${esc(v.cells?.[k])}</div>`).join('')}</div>`).join('')}</details>` : ''}`;
 }
 
@@ -722,23 +727,24 @@ function pageReview() {
   const wk = C.weekKey();
   const rv = reviewRec(wk);
   const step = rv?.step || 0;
+  const md = s => `${Number(s.slice(5, 7))} 月 ${Number(s.slice(8, 10))} 日`;
   const end = C.dayStr(C.addDays(C.weekStart(), 6));
-  let h = top('周回顾');
-  h += `<p class="desc" style="margin:-6px 4px 12px">${wk} 至 ${end} · 每周日 20 分钟，按顺序做完</p>`;
+  let h = top('');
+  h += `<h1 style="margin:4px 2px 4px">周回顾</h1><p class="lede" style="margin:0 2px">${md(wk)} 到 ${md(end)}，周日花 20 分钟按顺序做完</p>`;
   if (rv?.done) {
     const m = C.computeMetrics(state.recs, wk);
-    h += `<div class="card"><div class="label">DONE · 本周回顾已完成</div>${metricsGrid(m)}
-      <div class="btns" style="margin-top:12px"><button class="btn" data-act="review-copy">复制成文字（发给问责伙伴）</button>
-      <button class="btn plain small" data-act="review-redo">从头再做一遍</button></div></div>`;
+    h += `<div class="section"><div class="notice good">本周回顾已完成</div>${metricsGrid(m)}
+      <div class="btns" style="margin-top:16px"><button class="btn" data-act="review-copy">复制成文字，发给问责伙伴</button>
+      <button class="btn soft" data-act="review-redo">从头再做一遍</button></div></div>`;
     return h;
   }
-  h += `<div class="steps-line">${REVIEW_STEPS.map((_, i) => `<i class="${i <= step ? 'on' : ''}"></i>`).join('')}</div>`;
-  h += `<div class="card" id="review-step" data-step="${step}"><div class="label">STEP 0${step + 1} / 06</div><div class="title">${REVIEW_STEPS[step]}</div>`;
+  h += `<div class="progress-steps" aria-hidden="true">${REVIEW_STEPS.map((_, i) => `<i class="${i <= step ? 'on' : ''}"></i>`).join('')}</div>`;
   const body = reviewBody(step, wk, rv);
-  h += `<div class="step-body">${body.html}</div>`;
-  h += `<div class="btns" style="margin-top:14px">${step > 0 ? `<button class="btn plain" data-act="review-back">上一步</button>` : ''}
-    <button class="btn grow" style="flex:1" id="review-next" data-act="review-next" ${body.ok ? '' : 'disabled'}>${step === 5 ? '完成回顾' : '下一步'}</button></div>
-    ${body.ok ? '' : `<p class="muted" style="text-align:center;margin-top:6px">${body.why}</p>`}</div>`;
+  h += `<div id="review-step" data-step="${step}"><div class="section-head"><h2>第 ${step + 1} 步：${REVIEW_STEPS[step]}</h2><span class="faint">共 6 步</span></div>
+    <div class="sheet pad">${body.html}</div>
+    <div class="btns" style="margin-top:14px">${step > 0 ? `<button class="btn soft" data-act="review-back">上一步</button>` : ''}
+    <button class="btn" style="flex:1" id="review-next" data-act="review-next" ${body.ok ? '' : 'disabled'}>${step === 5 ? '完成回顾' : '下一步'}</button></div>
+    ${body.ok ? '' : `<p class="faint" style="text-align:center;margin-top:8px">${body.why}</p>`}</div>`;
   return h;
 }
 
@@ -749,9 +755,9 @@ function metricsGrid(m) {
     ['预测命中率', C.pct(m.hitRate)],
     ['半途放弃', m.stopped],
     ['收入', '¥' + m.income],
-    ['近 14 天使用天数', m.usageDays14],
+    ['近 14 天用了几天', m.usageDays14],
   ];
-  return `<div class="metric-grid" style="margin-top:10px">${items.map(([l, v]) => `<div class="metric"><b>${v}</b><span>${l}</span></div>`).join('')}</div>`;
+  return `<div class="metrics">${items.map(([l, v]) => `<div><b>${v}</b><span>${l}</span></div>`).join('')}</div>`;
 }
 
 function reviewBody(step, wk, rv) {
@@ -763,39 +769,38 @@ function reviewBody(step, wk, rv) {
     const extra = doneIds.filter(id => !ids.includes(id));
     return {
       ok: true,
-      html: `<div class="desc">上周日预测这周会拼上的块，和实际拼上的对一下。</div>
-        ${ids.length ? ids.map(id => `<div class="piece-row"><span class="tag ${doneIds.includes(id) ? 'done' : ''}">${doneIds.includes(id) ? '✓ 中' : '✗ 没拼上'}</span><div class="name ellipsis">${esc(get(id).name)}</div></div>`).join('')
-          : '<div class="muted" style="margin-top:8px">这周没有预测（第一周正常）。今天最后一步会做下周的预测。</div>'}
-        ${extra.length ? `<div class="muted" style="margin-top:8px">预测外拼上的：${extra.map(id => esc(get(id)?.name)).join('、')}</div>` : ''}
-        <div class="stat" style="margin-top:12px"><b id="hit-rate">${C.pct(m.hitRate)}</b><span class="desc">命中率（预测 ${m.predicted} 块，中 ${m.hits} 块）</span></div>`,
+      html: `<div class="big-rate" id="hit-rate">${m.predicted ? C.pct(m.hitRate) : ''}</div>
+        ${m.predicted ? `<p class="small" style="margin:0 0 12px">预测命中率：上周日说会拼上 ${m.predicted} 块，拼上了其中 ${m.hits} 块</p>` : ''}
+        ${ids.length ? ids.map(id => `<div class="row-item">${pcIcon(doneIds.includes(id) ? 'done' : '')}<div class="grow ellipsis">${esc(get(id).name)}</div><span class="state ${doneIds.includes(id) ? 'done' : ''}">${doneIds.includes(id) ? '拼上了' : '没拼上'}</span></div>`).join('')
+          : '<p class="small" style="margin:0">这周没有预测，第一周正常。最后一步会定下周的预测。</p>'}
+        ${extra.length ? `<p class="faint" style="margin:10px 0 0">预测之外拼上的：${extra.map(id => esc(get(id)?.name)).join('、')}</p>` : ''}`,
     };
   }
   if (step === 1) {
     const list = scatterNotes();
     return {
       ok: !list.length,
-      why: `还有 ${list.length} 个散块：挂到某块、升级成拼块，或删掉`,
-      html: `<div class="desc" style="margin-bottom:10px">每个散块：挂到某块 / 升级成新拼块 / 删除。删之前看一眼：这就是本周偏离的地方。</div>
-        ${list.length ? list.map(scatterItem).join('') : '<div class="desc">散块盒已清空 ✓</div>'}`,
+      why: `还有 ${list.length} 条没归位：挂到某块、变成新拼块，或删掉`,
+      html: list.length ? `<p class="small" style="margin:0 0 4px">删之前看一眼：这就是本周跑偏的地方。</p>${list.map(scatterItem).join('')}` : '<p style="margin:0">散块盒已经清空。</p>',
     };
   }
   if (step === 2) {
     const ids = (rv?.quiz || []).filter(id => get(id));
     const res = rv?.quizResults || {};
-    if (!ids.length) return { ok: true, html: '<div class="desc">还没有写完的经验卡，这一步跳过。</div>' };
+    if (!ids.length) return { ok: true, html: '<p style="margin:0">还没有写完四格的经验卡，这一步跳过。</p>' };
     const left = ids.filter(id => !res[id]).length;
     return {
       ok: !left,
       why: `还有 ${left} 张没自评`,
-      html: `<div class="desc" style="margin-bottom:10px">只看标题，先在心里说出「核心」和「方法」，再翻开对照。</div>
+      html: `<p class="small" style="margin:0 0 12px">只看标题，先在心里说出「核心」和「方法」，再翻开对照。</p>
         ${ids.map(id => {
           const c = get(id);
           const open = state.ui.reveal[id];
-          return `<div class="quiz-card" data-quiz="${id}"><b>${esc(c.title)}</b>
-            ${open ? `<div class="cell" style="margin-top:8px"><b>核心</b><div>${esc(c.cells.core)}</div></div><div class="cell" style="margin-top:6px"><b>方法</b><div>${esc(c.cells.method)}</div></div>
-              <div class="btns" style="margin-top:8px">${[['ok', '记得'], ['vague', '模糊'], ['forgot', '忘了']].map(([k, l]) =>
-                `<span class="chip ${res[id] === k ? 'on' : ''}" data-act="quiz-rate" data-id="${id}" data-r="${k}">${l}</span>`).join('')}</div>`
-              : `<div style="margin-top:8px"><button class="btn small ghost" data-act="quiz-reveal" data-id="${id}">翻开</button></div>`}</div>`;
+          return `<div class="quiz" data-quiz="${id}"><b>${esc(c.title)}</b>
+            ${open ? `<div class="cells" style="margin-top:10px"><div class="cell" style="background:#fff"><b>核心</b><div>${esc(c.cells.core)}</div></div><div class="cell" style="background:#fff"><b>方法</b><div>${esc(c.cells.method)}</div></div></div>
+              <div style="margin-top:10px">${[['ok', '记得'], ['vague', '模糊'], ['forgot', '忘了']].map(([k, l]) =>
+                `<button class="chip ${res[id] === k ? 'on' : ''}" style="background:${res[id] === k ? '' : '#fff'}" data-act="quiz-rate" data-id="${id}" data-r="${k}">${l}</button>`).join('')}</div>`
+              : `<div style="margin-top:10px"><button class="btn sm line" data-act="quiz-reveal" data-id="${id}">翻开</button></div>`}</div>`;
         }).join('')}`,
     };
   }
@@ -803,9 +808,9 @@ function reviewBody(step, wk, rv) {
     const pzs = [mainPuzzle(), sidePuzzle()].filter(Boolean);
     return {
       ok: true,
-      html: pzs.map(pz => `<div class="label" style="margin-top:6px">${LANES[pz.lane]} · ${esc(pz.name)}</div>
-        ${(pz.leads || []).map(l => { const n = leadCount(l, wk), t = Number(l.target) || 1; return `<div class="piece-row"><span class="tag ${n >= t ? 'done' : ''}">${n} / ${t}</span><div class="name">${esc(l.name)}</div></div>`; }).join('')}`).join('')
-        || '<div class="desc">没有在推进的拼图。</div>',
+      html: pzs.map(pz => `<p class="small" style="margin:${pz.lane === 'main' ? 0 : '14px'} 0 0">${LANES[pz.lane]}：${esc(pz.name)}</p>
+        ${(pz.leads || []).map(l => { const n = leadCount(l, wk), t = Number(l.target) || 1; return `<div class="row-item"><div class="grow">${esc(l.name)}</div><span class="state ${n >= t ? 'done' : ''} num">${n} / ${t}</span></div>`; }).join('')}`).join('')
+        || '<p style="margin:0">没有在推进的拼图。</p>',
     };
   }
   if (step === 4) {
@@ -814,15 +819,15 @@ function reviewBody(step, wk, rv) {
     const left = flagged.filter(pz => !handled(pz.id));
     return {
       ok: !left.length,
-      why: '有拼图连续 2 周没有外部反馈，先选停还是改',
+      why: '有拼图连续 2 周没有外部反馈，先选停下还是换做法',
       html: flagged.length ? flagged.map(pz => {
         const days = Math.floor((Date.now() - lastFeedbackAt(pz)) / DAY);
-        if (handled(pz.id)) return `<div class="piece-row"><span class="tag done">已处理</span><div class="name">${esc(pz.name)}</div></div>`;
-        return `<div class="quiz-card"><b>${esc(pz.name)}</b><div class="desc">已经 ${days} 天没有任何外部反馈（没人用、没人问价、没人付钱）</div>
-          <textarea id="stop-reason-${pz.id}" rows="2" style="margin-top:8px" placeholder="一句真实原因"></textarea>
-          <div class="btns" style="margin-top:8px"><button class="btn small danger" data-act="stop-do" data-id="${pz.id}" data-a="stop">停</button>
-          <button class="btn small ghost" data-act="stop-do" data-id="${pz.id}" data-a="change">改（换个做法再试 2 周）</button></div></div>`;
-      }).join('') : '<div class="desc">在推进的拼图最近 2 周都有外部反馈 ✓</div><div class="muted" style="margin-top:6px">外部反馈 = 随手记时勾了「这是外部反馈」，或收到了收款。</div>',
+        if (handled(pz.id)) return `<div class="row-item"><div class="grow">${esc(pz.name)}</div><span class="state done">已处理</span></div>`;
+        return `<div class="quiz"><b>${esc(pz.name)}</b><p class="small" style="margin:4px 0 10px">已经 ${days} 天没有任何外部反馈：没人用、没人问价、没人付钱。</p>
+          <textarea id="stop-reason-${pz.id}" rows="2" style="background:#fff" placeholder="一句真实原因"></textarea>
+          <div class="btns" style="margin-top:10px"><button class="btn sm warn" data-act="stop-do" data-id="${pz.id}" data-a="stop">停下</button>
+          <button class="btn sm line" data-act="stop-do" data-id="${pz.id}" data-a="change">换个做法再试 2 周</button></div></div>`;
+      }).join('') : '<p style="margin:0">在推进的拼图最近 2 周都有外部反馈。</p><p class="faint" style="margin:8px 0 0">外部反馈指随手记时标了「这是外部反馈」，或者收到了收款。</p>',
     };
   }
   const nk = C.nextWeekKey();
@@ -831,10 +836,9 @@ function reviewBody(step, wk, rv) {
   const pzs = [mainPuzzle(), sidePuzzle()].filter(Boolean);
   return {
     ok: true,
-    html: `<div class="desc">勾出下周会拼上的块（下周日用来对账）。</div>
-      ${pzs.map(pz => `<div class="label" style="margin:12px 0 6px">${LANES[pz.lane]} · ${esc(pz.name)}</div>
-        ${piecesOf(pz.id).filter(p => p.status !== 'done').map(p => `<span class="chip ${sel.has(p.id) ? 'on' : ''}" data-act="predict-toggle" data-id="${p.id}">${esc(p.name)}</span>`).join('') || '<span class="muted">没有空位</span>'}`).join('')}
-      <div class="muted" style="margin-top:8px">已选 ${sel.size} 块</div>`,
+    html: `<p class="small" style="margin:0 0 12px">点出下周会拼上的块，下周日拿来对账。已选 <b class="num">${sel.size}</b> 块。</p>
+      ${pzs.map(pz => `<p class="faint" style="margin:10px 0 6px">${LANES[pz.lane]}：${esc(pz.name)}</p>
+        ${piecesOf(pz.id).filter(p => p.status !== 'done').map(p => `<button class="chip ${sel.has(p.id) ? 'on' : ''}" data-act="predict-toggle" data-id="${p.id}">${esc(p.name)}</button>`).join('') || '<span class="faint">没有空位</span>'}`).join('')}`,
   };
 }
 
@@ -842,34 +846,36 @@ function reviewBody(step, wk, rv) {
 
 function pageSettings() {
   const c = cfg();
-  let h = top('设置', { back: '#/' });
-  h += `<div class="card"><div class="label">SYNC · 手机和电脑同步</div>
-    <div class="desc" id="sync-detail" style="margin:6px 0 12px">${syncDetail()}</div>
-    <div class="field"><label>数据仓库</label><input type="text" id="s-repo" value="${esc(c.repo)}"></div>
-    <div class="field"><label>令牌<span class="hint">只存在这台设备上</span></label><input type="password" id="s-token" value="${esc(c.token)}" placeholder="github_pat_ 开头的一长串" autocomplete="off"></div>
-    <div class="field"><label>这台设备叫</label><input type="text" id="s-device" value="${esc(c.device)}"></div>
+  let h = top('', { back: '#/' });
+  h += `<h1 style="margin:4px 2px 18px">设置</h1>
+  <div class="section-head"><h2>手机和电脑同步</h2></div>
+  <div class="sheet pad">
+    <p class="small" id="sync-detail" style="margin:0 0 14px">${syncDetail()}</p>
+    <div class="field"><label for="s-repo">数据仓库</label><input type="text" id="s-repo" value="${esc(c.repo)}"></div>
+    <div class="field"><label for="s-token">令牌<span class="hint">只存在这台设备上</span></label><input type="password" id="s-token" value="${esc(c.token)}" placeholder="github_pat_ 开头的一长串" autocomplete="off"></div>
+    <div class="field"><label for="s-device">这台设备叫</label><input type="text" id="s-device" value="${esc(c.device)}"></div>
     <div id="s-msg"></div>
-    <div class="btns"><button class="btn" data-act="sync-save">保存并测试</button><button class="btn ghost" data-act="sync-now">立即同步</button></div>
-    <details style="margin-top:14px"><summary class="link">怎么拿令牌（第一次用，约 2 分钟）</summary>
-      <ol class="desc" style="padding-left:20px">
-        <li>点下面的按钮，打开 GitHub 的「新建令牌」页（名称、有效期、权限已经填好）</li>
-        <li>「Repository access」选 <b>Only select repositories</b>，再选 <b>puzzle-progress-data</b> 一个仓库</li>
+    <div class="btns"><button class="btn" data-act="sync-save">保存并测试</button><button class="btn line" data-act="sync-now">立即同步</button></div>
+    <details style="margin-top:18px"><summary class="link">第一次用：怎么拿令牌（约 2 分钟）</summary>
+      <ol class="steps-list">
+        <li>点下面的按钮，打开 GitHub 的新建令牌页，名称、有效期、权限都已填好</li>
+        <li>「Repository access」选 <b>Only select repositories</b>，再选 <b>puzzle-progress-data</b></li>
         <li>拉到底点绿色的 <b>Generate token</b>，复制那串 github_pat_ 开头的字</li>
-        <li>粘到上面「令牌」里，点「保存并测试」。手机和电脑各填一次</li>
+        <li>粘到上面的「令牌」里，点「保存并测试」。手机和电脑各填一次</li>
       </ol>
-      <a class="btn ghost small" href="${esc(TOKEN_URL)}" target="_blank" rel="noopener">打开 GitHub 建令牌页</a>
+      <a class="btn sm line" href="${esc(TOKEN_URL)}" target="_blank" rel="noopener">打开 GitHub 建令牌页</a>
     </details>
   </div>
-  <div class="card"><div class="label">BACKUP · 备份</div>
-    <div class="desc" style="margin:6px 0 12px">整包导出成一个文件（含图片和录音，不含令牌）。换手机时导入，或用微信传给自己留底。</div>
-    <div class="btns"><button class="btn ghost" data-act="export">导出全部数据</button>
-    <label class="btn plain">导入备份<input type="file" accept=".json,application/json" hidden data-change="import"></label></div>
-  </div>
-  <div class="card"><div class="label">DANGER · 清空</div>
-    <div class="desc" style="margin:6px 0 12px">只清这台设备上的数据；开了同步的话，下次同步会从云端拿回来。</div>
-    <button class="btn danger" data-act="wipe">清空本机数据</button>
-  </div>
-  <p class="muted" style="text-align:center">拼图推进 ${VERSION}</p>`;
+  <div class="section"><div class="section-head"><h2>备份</h2></div><div class="sheet pad">
+    <p class="small" style="margin:0 0 14px">整包导出成一个文件，含图片和录音，不含令牌。换手机时导入，也可以用微信发给自己留底。</p>
+    <div class="btns"><button class="btn line" data-act="export">导出全部数据</button>
+    <label class="btn soft">导入备份<input type="file" accept=".json,application/json" hidden data-change="import"></label></div>
+  </div></div>
+  <div class="section"><div class="section-head"><h2>清空这台设备</h2></div><div class="sheet pad">
+    <p class="small" style="margin:0 0 14px">只清这台设备上的数据。开了同步的话，下次同步会从云端拿回来。</p>
+    <button class="btn warn" data-act="wipe">清空本机数据</button>
+  </div></div>
+  <p class="faint" style="text-align:center;margin-top:24px">拼图推进 ${VERSION}</p>`;
   return h;
 }
 
@@ -913,9 +919,9 @@ function pickHtml() {
   const groups = [mainPuzzle(), sidePuzzle()].filter(Boolean).map(pz => {
     const ps = piecesOf(pz.id).filter(p => p.status !== 'done');
     return `<div class="field"><label>${pz.lane === 'main' ? '主线' : '副线（最多 1 块）'} · ${esc(pz.name)}</label>
-      ${ps.map(p => `<span class="chip ${sel.has(p.id) ? 'on' : ''}" data-act="pick-toggle" data-id="${p.id}">${esc(p.name)}</span>`).join('') || '<div class="muted">没有空位了</div>'}</div>`;
+      ${ps.map(p => `<button class="chip ${sel.has(p.id) ? 'on' : ''}" data-act="pick-toggle" data-id="${p.id}">${esc(p.name)}</button>`).join('') || '<div class="faint">没有空位了</div>'}</div>`;
   });
-  return `<h3>今天做哪几块？<span class="muted" style="font-weight:400"> 最多 3 块</span></h3>${groups.join('')}
+  return `<h2>今天做哪几块？<span class="faint" style="font-weight:400"> 最多 3 块</span></h2>${groups.join('')}
     <button class="btn block" data-act="pick-save">定下来（${sel.size} 块）</button>`;
 }
 
@@ -985,13 +991,14 @@ function noteHtml() {
   const cands = [];
   const add = id => { if (id && get(id) && !cands.includes(id)) cands.push(id); };
   add(t); add(f?.pieceId); todayPieces().forEach(p => add(p.id));
-  return `<h3>随手记一句</h3>
-    <textarea id="note-text" rows="3" placeholder="此刻在做什么 / 想到什么，一句话。可用输入法的语音输入">${esc(state.ui.noteDraft || '')}</textarea>
-    <div style="margin:10px 0 4px" id="note-targets">
-      ${cands.map(id => `<span class="chip ${t === id ? 'on' : ''}" data-act="note-target" data-id="${id}">${f?.pieceId === id ? '专注中 · ' : ''}${esc(get(id).name)}</span>`).join('')}
-      <span class="chip ${!t ? 'on' : ''}" data-act="note-target" data-id="">散块盒</span>
+  return `<h2>随手记一句</h2>
+    <textarea id="note-text" rows="3" aria-label="随手记" placeholder="此刻在做什么、想到什么，一句话就行。可以用输入法的语音输入">${esc(state.ui.noteDraft || '')}</textarea>
+    <p class="faint" style="margin:14px 0 8px">记在哪一块上</p>
+    <div id="note-targets">
+      ${cands.map(id => `<button class="chip ${t === id ? 'on' : ''}" data-act="note-target" data-id="${id}">${esc(get(id).name)}</button>`).join('')}
+      <button class="chip ${!t ? 'on' : ''}" data-act="note-target" data-id="">都不是，放散块盒</button>
     </div>
-    <div style="margin-bottom:12px"><span class="chip ${state.ui.noteFeedback ? 'on' : ''}" data-act="note-feedback">这是外部反馈</span></div>
+    <div style="margin:4px 0 14px"><button class="chip ${state.ui.noteFeedback ? 'on' : ''}" data-act="note-feedback" aria-pressed="${!!state.ui.noteFeedback}">这是别人给的反馈</button></div>
     <button class="btn block" data-act="note-save" id="note-save">记下</button>`;
 }
 
@@ -1025,7 +1032,7 @@ A['note-save'] = async () => {
   const n = mk('note', { text, at: Date.now(), pieceId, feedback: !!state.ui.noteFeedback, puzzleId: pieceId ? get(pieceId).puzzleId : mainPuzzle()?.id || null });
   await save(n);
   closeModal();
-  toast(pieceId ? '已记下' : '已记下 · 进了散块盒');
+  toast(pieceId ? '记下了' : '记下了，放进散块盒');
   render();
 };
 
@@ -1034,9 +1041,9 @@ function piecePickerHtml(title, act, extra = '') {
   const groups = [mainPuzzle(), sidePuzzle(), ...puzzlesIn('paused')].filter(Boolean).map(pz => {
     const ps = piecesOf(pz.id);
     return `<div class="field"><label>${LANES[pz.lane]} · ${esc(pz.name)}</label>
-      ${ps.map(p => `<span class="chip" data-act="${act}" data-id="${p.id}" ${extra}>${esc(p.name)}</span>`).join('') || '<div class="muted">没有拼块</div>'}</div>`;
+      ${ps.map(p => `<button class="chip" data-act="${act}" data-id="${p.id}" ${extra}>${esc(p.name)}</button>`).join('') || '<div class="faint">没有拼块</div>'}</div>`;
   });
-  return `<h3>${title}</h3>${groups.join('') || '<div class="muted">还没有拼图</div>'}`;
+  return `<h2>${title}</h2>${groups.join('') || '<div class="faint">还没有拼图</div>'}`;
 }
 
 A['scatter-attach'] = d => { state.ui.attachNote = d.id; openModal(piecePickerHtml('挂到哪一块？', 'attach-to')); };
@@ -1054,7 +1061,7 @@ A['scatter-upgrade'] = d => {
   state.ui.attachNote = d.id;
   const pzs = [mainPuzzle(), sidePuzzle(), ...puzzlesIn('paused')].filter(Boolean);
   if (!pzs.length) return toast('先建一幅拼图');
-  openModal(`<h3>升级成哪幅拼图的新拼块？</h3>
+  openModal(`<h2>变成哪幅拼图的新拼块？</h2>
     <div class="field"><label>拼块名称<span class="hint">写成一个能交出去的产出</span></label><input type="text" id="up-name" value="${esc(get(d.id).text.slice(0, 40))}"></div>
     ${pzs.map(pz => `<button class="btn block ${pz.lane === 'main' ? '' : 'ghost'}" style="margin-bottom:8px" data-act="upgrade-to" data-pz="${pz.id}">${LANES[pz.lane]} · ${esc(pz.name)}</button>`).join('')}`);
 };
@@ -1096,7 +1103,7 @@ A['save-puzzle'] = async d => {
   const miss = C.puzzleMissing(data);
   if (!data.name) miss.unshift('拼图名称');
   if (miss.length) {
-    $('#form-err').innerHTML = `<div class="err-box">还缺：${miss.join('、')}</div>`;
+    $('#form-err').innerHTML = `<div class="notice bad">还缺：${miss.join('、')}</div>`;
     scrollTo({ top: 0, behavior: 'smooth' });
     return;
   }
@@ -1148,11 +1155,11 @@ A.lane = async d => {
 };
 
 A['stop-dialog'] = d => {
-  openModal(`<h3>停，还是改？</h3>
-    <div class="desc" style="margin-bottom:10px">写一句真实原因，进「半途而废清单」。停 = 移出推进；改 = 换个做法再试 2 周。</div>
+  openModal(`<h2>停下，还是换个做法？</h2>
+    <p class="small" style="margin:0 0 12px">写一句真实原因，会记进半途而废清单。停下就移出推进；换做法就再试 2 周。</p>
     <textarea id="stop-reason-${d.id}" rows="3" placeholder="一句真实原因"></textarea>
-    <div class="btns" style="margin-top:12px"><button class="btn danger" data-act="stop-do" data-id="${d.id}" data-a="stop">停</button>
-    <button class="btn ghost" data-act="stop-do" data-id="${d.id}" data-a="change">改</button></div>`);
+    <div class="btns" style="margin-top:12px"><button class="btn warn" data-act="stop-do" data-id="${d.id}" data-a="stop">停下</button>
+    <button class="btn line" data-act="stop-do" data-id="${d.id}" data-a="change">换个做法</button></div>`);
 };
 
 A['stop-do'] = async d => {
@@ -1205,7 +1212,7 @@ async function addEvidence(p, e) {
   render();
 }
 
-A['evi-link'] = d => openModal(`<h3>加一个链接证据</h3>
+A['evi-link'] = d => openModal(`<h2>加一个链接证据</h2>
   <div class="field"><label>链接</label><input type="url" id="evi-url" placeholder="https://"></div>
   <div class="field"><label>说明<span class="hint">可不填</span></label><input type="text" id="evi-note"></div>
   <button class="btn block" data-act="evi-link-save" data-id="${d.id}">加上</button>`);
@@ -1218,7 +1225,7 @@ A['evi-link-save'] = async d => {
   await addEvidence(get(d.id), { kind: 'link', url, note });
 };
 
-A['evi-income'] = d => openModal(`<h3>加一笔收款</h3>
+A['evi-income'] = d => openModal(`<h2>加一笔收款</h2>
   <div class="field"><label>金额（元）</label><input type="number" id="evi-amount" min="0" step="0.01" inputmode="decimal"></div>
   <div class="field"><label>说明<span class="hint">谁付的、为什么付</span></label><input type="text" id="evi-note"></div>
   <div class="field"><label>收款截图<span class="hint">建议附上</span></label><input type="file" accept="image/*" id="evi-shot"></div>
@@ -1278,14 +1285,14 @@ A.place = async d => {
   const pr = progress(get(p.puzzleId));
   const o = document.createElement('div');
   o.className = 'placed-overlay';
-  o.innerHTML = `<div>${singleSvg()}<p>拼上了！${pr.done} / ${pr.total}<br><span class="desc" style="font-weight:400">趁热写经验卡</span></p></div>`;
+  o.innerHTML = `<div>${pieceArt(p, { big: true }).replace('piece-hero', '')}<p>拼上了，${pr.done} / ${pr.total}<span>趁热写下这块的经验</span></p></div>`;
   document.body.appendChild(o);
   setTimeout(() => {
     o.remove();
     state.ui.cardStep[card.id] = 1;
     location.hash = `#/card/${card.id}`;
-    if (pr.done === pr.total) toast('整幅拼图拼完了！可以在拼图页宣布完成', 3500);
-  }, 1100);
+    if (pr.done === pr.total) toast('整幅拼图拼完了，可以在拼图页宣布完成', 3500);
+  }, 1300);
 };
 
 A.unplace = async d => {
@@ -1299,8 +1306,7 @@ A.unplace = async d => {
 
 // ---- 经验卡 ----
 A['card-filter'] = d => { state.ui.cardFilter = d.f; render(); };
-A['hide-guide'] = () => { state.ui.hideGuide = true; render(); };
-A['show-guide'] = () => { state.ui.hideGuide = false; render(); };
+A.glyph = d => { const i = Number(d.i); state.ui.glyph = state.ui.glyph === i ? null : i; render(); };
 A['card-step'] = d => { state.ui.cardStep[d.id] = Number(d.i); render(); };
 
 A['card-save'] = async d => {
@@ -1440,16 +1446,16 @@ A['sync-save'] = async () => {
   const device = $('#s-device').value.trim() || cfg().device;
   setCfg({ repo, token, device });
   const msg = $('#s-msg');
-  if (!token) { msg.innerHTML = '<div class="ok-box">已保存。没填令牌：数据只在这台设备上。</div>'; return; }
-  msg.innerHTML = '<div class="ok-box">正在测试连接…</div>';
+  if (!token) { msg.innerHTML = '<div class="notice good">已保存。没填令牌：数据只在这台设备上。</div>'; return; }
+  msg.innerHTML = '<div class="notice good">正在测试连接…</div>';
   try {
     const info = await S.testConnection(cfg());
     msg.innerHTML = info.private
-      ? `<div class="ok-box">连上了：${esc(info.name)}（私有仓库）。正在同步…</div>`
-      : `<div class="err-box">连上了，但 ${esc(info.name)} 是公开仓库，别人能看到你的记录。请到 GitHub 把它改成私有。</div>`;
+      ? `<div class="notice good">连上了：${esc(info.name)}（私有仓库）。正在同步…</div>`
+      : `<div class="notice bad">连上了，但 ${esc(info.name)} 是公开仓库，别人能看到你的记录。请到 GitHub 把它改成私有。</div>`;
     await doSync();
   } catch (e) {
-    msg.innerHTML = `<div class="err-box">${esc(e.message)}</div>`;
+    msg.innerHTML = `<div class="notice bad">${esc(e.message)}</div>`;
   }
 };
 A['sync-now'] = () => doSync(true);
@@ -1516,6 +1522,10 @@ function tick() {
   document.querySelectorAll('[data-clock]').forEach(el => {
     const ff = get(el.dataset.clock);
     if (ff) el.textContent = C.fmtClock(Date.now() - ff.start);
+  });
+  document.querySelectorAll('[data-bar]').forEach(el => {
+    const ff = get(el.dataset.bar);
+    if (ff) el.style.width = Math.min(100, ((Date.now() - ff.start) / ff.planned) * 100).toFixed(1) + '%';
   });
   if (recorder) document.querySelectorAll('[data-rec-clock]').forEach(el => { el.textContent = C.fmtClock(Date.now() - recorder.start); });
 }

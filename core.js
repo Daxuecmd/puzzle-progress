@@ -228,6 +228,58 @@ export function jigsaw(n) {
   return { cols, rows, size: C, pieces };
 }
 
+// ---------- 拼图画面：每幅拼图按编号生成一张固定的风景，拼上一块露出一块 ----------
+
+function rng(seed) {
+  let h = 2166136261;
+  for (const ch of String(seed)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  return () => {
+    h = (h + 0x6D2B79F5) | 0;
+    let t = h;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export const PALETTES = [
+  { sky: ['#F7DCC8', '#EDB49E'], sun: '#FFF3DE', ridges: ['#D19A9F', '#A6738C', '#6B5276', '#33304B'] },   // 晨
+  { sky: ['#E2ECE3', '#BCD6C9'], sun: '#FAF6E6', ridges: ['#97BBA8', '#66937F', '#3E6A58', '#203F35'] },   // 林
+  { sky: ['#D3E3EF', '#F2DABB'], sun: '#FFEBC8', ridges: ['#90ACC7', '#6283A8', '#3E5D83', '#233651'] },   // 海
+  { sky: ['#F5E6B9', '#E7C07D'], sun: '#FFF7E0', ridges: ['#CDA56D', '#A07D50', '#6E5839', '#3C3225'] },   // 秋
+];
+
+export const paletteFor = seed => PALETTES[Math.floor(rng(seed)() * PALETTES.length)];
+
+export function picture(seed, W, H, uid) {
+  const r = rng(seed);
+  const pal = PALETTES[Math.floor(r() * PALETTES.length)];
+  const sx = W * (0.22 + r() * 0.56), sy = H * (0.16 + r() * 0.12), sr = Math.min(W, H) * 0.1 + 6;
+  const defs = `<linearGradient id="${uid}-sky" x1="0" y1="0" x2="0" y2="1">` +
+    `<stop offset="0" stop-color="${pal.sky[0]}"/><stop offset="1" stop-color="${pal.sky[1]}"/></linearGradient>`;
+  let body = `<rect x="-40" y="-40" width="${W + 80}" height="${H + 80}" fill="url(#${uid}-sky)"/>` +
+    `<circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="${(sr * 1.9).toFixed(1)}" fill="${pal.sun}" opacity=".35"/>` +
+    `<circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="${sr.toFixed(1)}" fill="${pal.sun}"/>`;
+  for (let c = 0; c < 2; c++) {
+    const cx = W * r(), cy = H * (0.12 + r() * 0.2), cw = W * (0.12 + r() * 0.12);
+    body += `<ellipse cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" rx="${cw.toFixed(1)}" ry="${(cw * 0.22).toFixed(1)}" fill="#fff" opacity=".45"/>`;
+  }
+  pal.ridges.forEach((color, k) => {
+    const base = H * (0.40 + k * 0.155), amp = H * (0.13 - k * 0.018);
+    const n = 5 + k * 2, step = (W + 80) / n;
+    const pts = [];
+    for (let i = 0; i <= n; i++) pts.push([-40 + i * step, base - amp * (0.25 + r() * 0.75)]);
+    let d = `M-40 ${H + 40} L${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
+    for (let i = 1; i < pts.length; i++) {
+      const mx = (pts[i - 1][0] + pts[i][0]) / 2, my = (pts[i - 1][1] + pts[i][1]) / 2;
+      d += ` Q${pts[i - 1][0].toFixed(1)} ${pts[i - 1][1].toFixed(1)} ${mx.toFixed(1)} ${my.toFixed(1)}`;
+    }
+    d += ` L${W + 40} ${pts[pts.length - 1][1].toFixed(1)} L${W + 40} ${H + 40} Z`;
+    body += `<path d="${d}" fill="${color}"/>`;
+  });
+  return { defs, body };
+}
+
 // 单块拼图形状（散块、图标用）
 export const singlePiece = () =>
   'M0 0' + edge([0, 0], [100, 0], 1) + edge([100, 0], [100, 100], -1) + edge([100, 100], [0, 100], 1) + edge([0, 100], [0, 0], -1) + ' Z';

@@ -194,7 +194,7 @@ await t('2 无证据不能拼上；加图片证据后拼上 → 进经验卡 →
   await A.click('#place-btn');
   await A.waitFor('location.hash.startsWith("#/card/")', 5000, '拼上后进入经验卡');
   assert.equal(await A.eval(`PP.get("${firstPiece}").status`), 'done');
-  assert.equal(await A.eval('document.querySelector(".step.cur").dataset.step'), '1');
+  assert.equal(await A.eval('document.querySelector(".stepper .step.cur").dataset.step'), '1');
   await A.fill('#c-aar-plan', '一天做完'); await A.fill('#c-aar-actual', '两天'); await A.fill('#c-aar-why', '低估了'); await A.fill('#c-aar-next', '先列清单');
   await A.fill('#c-cell-core', '报价先给区间'); await A.fill('#c-cell-logic', '降低决策压力'); await A.fill('#c-cell-method', '三档报价');
   await A.click('[data-act="card-save"]');
@@ -202,7 +202,7 @@ await t('2 无证据不能拼上；加图片证据后拼上 → 进经验卡 →
   await A.fill('#c-cell-boundary', '大客户不适用');
   await A.click('[data-act="card-save"]');
   assert.equal(await A.text('#card-stage'), '待讲');
-  assert.equal(await A.eval('document.querySelector(".step.cur").dataset.step'), '2');
+  assert.equal(await A.eval('document.querySelector(".stepper .step.cur").dataset.step'), '2');
 });
 
 await t('3 首页到记下一句 ≤ 2 次点击；没在专注时进散块盒；散块升级成新拼块后拼图多一块', async () => {
@@ -415,7 +415,7 @@ await t('11 张截图', async () => {
   await P.eval('document.querySelector(".modal-wrap").remove()');
   await P.hash('#/scatter'); await P.shot('scatter-box');
   await P.hash('#/card/c1'); await P.eval('PP.state.ui.cardStep.c1 = 1; PP.render()'); await P.shot('card-steps');
-  await P.eval('PP.state.ui.cardStep.c1 = 2; PP.render(); document.querySelector(".step.cur").scrollIntoView()'); await P.shot('card-feynman');
+  await P.eval('PP.state.ui.cardStep.c1 = 2; PP.render()'); await P.shot('card-feynman');
   await P.hash('#/review'); await P.shot('review');
   await P.eval(`localStorage.setItem('pp.cfg', JSON.stringify({ repo: 'Daxuecmd/puzzle-progress-data', token: '', device: '手机' }))`);
   await P.hash('#/settings'); await P.eval('document.querySelector("details").open = true'); await P.shot('settings-sync');
