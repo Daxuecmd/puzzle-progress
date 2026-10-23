@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#eef0f3">
+<meta name="robots" content="noindex">
+<title>拼图推进</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<main id="app"><div id="view"></div></main>
+
+<button class="fab" id="fab" aria-label="随手记"><span>＋</span>随手记</button>
+
+<nav class="tabs"><div class="in">
+  <a href="#/" data-nav=""><svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/></svg>首页</a>
+  <a href="#/puzzles" data-nav="puzzles"><svg viewBox="0 0 24 24"><path d="M4 4h6v2a2 2 0 104 0V4h6v6h-2a2 2 0 100 4h2v6h-6v-2a2 2 0 10-4 0v2H4v-6h2a2 2 0 100-4H4z"/></svg>拼图</a>
+  <a href="#/cards" data-nav="cards"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="3"/><path d="M8 10h8M8 14h5"/></svg>卡片</a>
+  <a href="#/review" data-nav="review"><svg viewBox="0 0 24 24"><path d="M5 12a7 7 0 1 0 2-5"/><path d="M5 4v4h4"/><path d="M12 8v4l3 2"/></svg>回顾</a>
+</div></nav>
+
+<noscript>需要打开浏览器的 JavaScript 才能使用。</noscript>
+<script type="module" src="app.js"></script>
+</body>
+</html>
