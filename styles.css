@@ -60,9 +60,10 @@ h2 { font-size: 18px; line-height: 1.4; font-weight: 750; margin: 0; }
 }
 .tray.tap { cursor: pointer; }
 .jig { display: block; width: 100%; height: auto; overflow: visible; }
-.jig .fill { fill: var(--slot); }
+.jig .fill { fill: var(--slot); fill-opacity: .86; }
+.jig .ghost-art { filter: saturate(.35); }
 .jig .seam { fill: none; stroke: #fff; stroke-width: 2.4; stroke-linejoin: round; }
-.jig .doing .fill { fill: #F7F8F5; }
+.jig .doing .fill { fill: #F7F8F5; fill-opacity: .93; }
 .jig .doing .seam { stroke: var(--ink); stroke-width: 3; stroke-dasharray: 7 6; }
 .jig .done .seam { stroke: rgba(255, 255, 255, .45); stroke-width: 1.2; }
 .jig text { font: 700 24px var(--sans); fill: #B3B8BF; text-anchor: middle; dominant-baseline: central; pointer-events: none; }

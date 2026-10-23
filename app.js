@@ -2,7 +2,7 @@ import * as C from './core.js';
 import * as DB from './db.js';
 import * as S from './sync.js';
 
-export const VERSION = '1.1.0';
+export const VERSION = '1.1.1';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -334,7 +334,9 @@ function jigsawSvg(pz, { mini = false } = {}) {
   const seams = order.map(i => { const g = J.pieces[i]; return `<g class="${sts[i]} ${mini ? '' : 'tap'}" data-piece="${ps[i].id}" ${mini ? '' : `data-act="go" data-to="#/piece/${ps[i].id}"`}>
       <path class="seam" d="${g.d}" style="fill:transparent"/>${mini || sts[i] === 'done' ? '' : `<text x="${g.cx}" y="${g.cy}">${i + 1}</text>`}</g>`; }).join('');
   return `<svg class="jig ${mini ? 'mini' : ''}" viewBox="-3 -3 ${W + 6} ${H + 6}" role="img" aria-label="${esc(pz.name)}：已拼 ${doneIdx.length} / ${ps.length}">
-    <defs>${art.defs}<clipPath id="${uid}-c">${doneIdx.map(i => `<path d="${J.pieces[i].d}"/>`).join('')}</clipPath></defs>
+    <defs>${art.defs}<clipPath id="${uid}-c">${doneIdx.map(i => `<path d="${J.pieces[i].d}"/>`).join('')}</clipPath>
+      <clipPath id="${uid}-all">${J.pieces.map(g => `<path d="${g.d}"/>`).join('')}</clipPath></defs>
+    <g class="ghost-art" clip-path="url(#${uid}-all)">${art.body}</g>
     ${slots}
     ${doneIdx.length ? `<g clip-path="url(#${uid}-c)">${art.body}</g>` : ''}
     ${seams}
