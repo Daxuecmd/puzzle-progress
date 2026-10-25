@@ -1,7 +1,7 @@
 // 离线缓存：页面文件先用缓存、后台更新；数据接口一律不经过这里
-const CACHE = 'pp-v1.1.1';
+const CACHE = 'pp-v1.2.0';
 const FILES = [
-  './', './index.html', './styles.css', './app.js', './core.js', './db.js', './sync.js',
+  './', './index.html', './styles.css', './app.js', './core.js', './db.js', './sync.js', './motion.js', './vendor/qrcode.js',
   './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png',
 ];
 

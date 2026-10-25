@@ -365,6 +365,66 @@ await t('10 抽卡：有 7 张卡时抽 5 张不重复，3 张时抽 3 张', asy
   assert.equal(await A.eval('PP.C.sample([1,2,3], 5).length'), 3);
 });
 
+// ---------- v1.2：电脑自动入账、扫码开同步、关联工单 ----------
+
+const AUTO_SUGGEST = (id, pieceId) => JSON.stringify({ id, type: 'auto', kind: 'suggest', pieceId, ref: 'T900', text: 'T900 假任务 已待验收',
+  evidence: [{ kind: 'link', text: 'R1 报告', url: 'D:\\假路径\\R1-REPORT.md' }], dismissed: false, createdAt: 1 });
+
+await t('12 首页顺序：可以拼上 → 今天做这几块 → 主线一行 → 今天电脑上做了', async () => {
+  const pid = await A.eval(`PP.live("piece").find(p => p.puzzleId === "${mainId}" && p.status !== "done").id`);
+  await A.eval(`(async () => {
+    await PP.save(${AUTO_SUGGEST('auto-sg-1', pid)}, { id: 'auto-day-1', type: 'auto', kind: 'day', day: PP.C.dayStr(), project: 'demo', projectName: '假项目', lines: ['T900 假任务：执行中 → 待验收', '提交 2 次：甲；乙'], refs: ['T900'], createdAt: Date.now() });
+    location.hash = '#/'; PP.render();
+  })()`);
+  const order = await A.eval(`['.suggest', '#home-today', '#home-main', '#home-auto'].map(s => document.querySelector(s)?.getBoundingClientRect().top ?? -1)`);
+  assert.ok(order.every(v => v >= 0), '四节都要在：' + order);
+  assert.deepEqual([...order].sort((a, b) => a - b), order, '顺序不对：' + order);
+});
+
+await t('13 建议点「拼上」：证据带进拼块、进经验卡、建议不再显示；「忽略」只标记', async () => {
+  const pid = await A.eval('PP.get("auto-sg-1").pieceId');
+  await A.click('[data-act="suggest-place"]');
+  await A.waitFor('location.hash.startsWith("#/card/")', 5000, '拼上后进入经验卡');
+  assert.equal(await A.eval(`PP.get("${pid}").status`), 'done');
+  assert.ok(await A.eval(`PP.get("${pid}").evidence.some(e => e.url.includes("R1-REPORT"))`), '证据没带进拼块');
+  assert.equal(await A.eval('PP.get("auto-sg-1").dismissed'), true);
+  const other = await A.eval(`PP.live("piece").find(p => p.puzzleId === "${mainId}" && p.status !== "done").id`);
+  await A.eval(`(async () => { await PP.save(${AUTO_SUGGEST('auto-sg-2', other)}); location.hash = '#/'; PP.render(); })()`);
+  await A.click('[data-act="suggest-dismiss"]');
+  await A.waitFor('!document.querySelector(".suggest")', 3000, '忽略后不显示');
+  assert.equal(await A.eval('PP.get("auto-sg-2").dismissed'), true);
+  assert.equal(await A.eval(`PP.get("${other}").status`), 'empty', '忽略不应拼上');
+  await A.hash('#/piece/' + pid);
+  assert.match(await A.text('#evidence'), /R1-REPORT/);
+});
+
+await t('14 拼块关联工单：填「t027 T031 别的」存成 T027、T031', async () => {
+  const pid = await A.eval(`PP.live("piece").find(p => p.puzzleId === "${mainId}" && p.status !== "done").id`);
+  await A.hash('#/piece/' + pid);
+  await A.click('[data-act="edit-refs"]');
+  await A.fill('#refs-in', 't027 T031 别的');
+  await A.click('[data-act="refs-save"]');
+  assert.deepEqual(await A.eval(`PP.get("${pid}").refs`), ['T027', 'T031']);
+  assert.match(await A.text('#piece-refs'), /T027、T031/);
+});
+
+await t('15 扫码进来：令牌从地址栏抹掉、保存、同步拉到数据；电脑上能显示二维码', async () => {
+  const E = await newPage(cdp);
+  await E.goto(ORIGIN);
+  await E.eval(`localStorage.setItem('pp.cfg', JSON.stringify({ repo: 'me/data', api: ${JSON.stringify(gh.api)}, device: '平板' }))`);
+  await E.s('Page.navigate', { url: ORIGIN + '?pair#/pair/tk-test' });
+  await E.waitFor('!!window.PP && JSON.parse(localStorage.getItem("pp.cfg")).token === "tk-test"', 15000, '扫码后保存令牌');
+  assert.ok(!(await E.eval('location.href')).includes('tk-test'), '地址栏里还有令牌');
+  await E.waitFor('PP.live("puzzle").length >= 1', 10000, '扫码后同步拉到数据');
+  assert.equal(await E.eval('location.hash'), '#/');
+  await E.s('Target.closeTarget', { targetId: (await E.s('Target.getTargetInfo')).targetInfo.targetId }).catch(() => { });
+  await A.hash('#/settings');
+  await A.click('[data-act="pair-show"]');
+  await A.waitFor('!!document.querySelector("#pair-qr svg.qr path")', 5000, '二维码');
+  assert.ok((await A.eval('document.querySelector("#pair-qr path").getAttribute("d").length')) > 1000, '二维码内容太少');
+  await A.eval('document.querySelector(".modal-wrap").remove()');
+});
+
 await t('页面没有报错', async () => {
   const all = [...A.logs, ...B.logs].filter(l => !/Failed to fetch|ERR_INTERNET_DISCONNECTED|ERR_CONNECTION|net::/.test(l));
   assert.deepEqual(all, []);
@@ -409,7 +469,38 @@ await t('11 张截图', async () => {
     PP.render();
   })()`);
   await P.hash('#/'); await P.shot('home');
+  // 电脑自动入账的两种记录
+  await P.eval(`(async () => {
+    const now = Date.now(), day = PP.C.dayStr();
+    await PP.save(
+      { id: 'auto-s-demo', type: 'auto', kind: 'suggest', pieceId: 'dp5', ref: 'T901', text: 'T901 支付通道联调 已待验收', evidence: [{ kind: 'link', text: 'R1 报告', url: 'D:\\\\示例\\\\T901\\\\R1-REPORT.md' }], dismissed: false, createdAt: now },
+      { id: 'auto-d-demo1', type: 'auto', kind: 'day', day, project: 'shop', projectName: '独立站', lines: ['T901 支付通道联调：执行中 → 待验收', '提交 4 次：接入测试支付；修复回调签名；补退款流程', '和 Claude 聊了 1 段：支付回调排查'], refs: ['T901'], createdAt: now },
+      { id: 'auto-d-demo2', type: 'auto', kind: 'day', day, project: 'course', projectName: '短视频课', lines: ['T902 招生海报：待执行 → 执行中', '提交 2 次：海报三版', '和 Claude 聊了 2 段：课程定价；海报文案', '提交 1 次：报名表字段'], refs: ['T902'], createdAt: now });
+    PP.render();
+  })()`);
+  await P.size(412, 860, true); await P.hash('#/'); await P.eval('PP.render()'); await P.shot('home-auto');
+  const fold = await P.eval('({ today: document.querySelector("#home-today").getBoundingClientRect().top, main: document.querySelector("#home-main").getBoundingClientRect().bottom, h: innerHeight })');
+  assert.ok(fold.today < fold.h && fold.main <= fold.h, '412×860 第一屏看不全今天和主线：' + JSON.stringify(fold));
+  await P.size(412, 915, true);
+  // 落位动画定格在飞入途中
+  await P.eval(`(() => { const st = window.setTimeout; window.setTimeout = (fn, ms, ...a) => (ms >= 2000 ? 0 : st(fn, ms, ...a)); document.querySelector('[data-act="suggest-place"]').click(); })()`);
+  await sleep(150);
+  await P.eval('document.getAnimations().forEach(a => { a.pause(); a.currentTime = 1000; })');
+  const { data: placed } = await P.s('Page.captureScreenshot', { format: 'png' });
+  fs.writeFileSync(path.join(SHOTS, 'suggest-place.png'), Buffer.from(placed, 'base64'));
+  await P.reload();
+  await P.hash('#/piece/dp6'); await P.eval(`(async () => { const p = PP.get('dp6'); p.refs = ['T903']; await PP.save(p); PP.render(); })()`); await P.shot('piece-refs');
+  await P.eval(`localStorage.setItem('pp.cfg', JSON.stringify({ repo: 'Daxuecmd/puzzle-progress-data', token: 'tk-demo', api: 'http://127.0.0.1:9', device: '电脑' }))`);
+  await P.hash('#/settings'); await P.eval('PP.render()'); await P.click('[data-act="pair-show"]'); await P.waitFor('!!document.querySelector("#pair-qr svg")'); await P.shot('pair-qr');
+  await P.eval('document.querySelector(".modal-wrap").remove()');
   await P.hash('#/puzzle/demo'); await P.shot('puzzle');
+  // 四种动效模型各一张拼图页（等亮出动画走完），再来一张设置里的选择
+  for (const m of ['dawn', 'tide', 'stars', 'still']) {
+    await P.eval(`localStorage.setItem('pp.motion', '${m}'); PP.state.ui.looked = new Set(['demo']); PP.render()`);
+    await sleep(900); await P.shot('motion-' + m);
+  }
+  await P.eval(`localStorage.setItem('pp.motion', 'dawn')`);
+  await P.hash('#/settings'); await P.eval('PP.render(); document.querySelector("#motion").scrollIntoView()'); await sleep(600); await P.shot('settings-motion');
   await P.hash('#/piece/dp3'); await P.eval('document.querySelector("#evidence").scrollIntoView()'); await P.shot('piece-evidence');
   await P.hash('#/'); await P.click('#fab'); await P.fill('#note-text', '买家问能不能发 UPS'); await P.shot('note-quick');
   await P.eval('document.querySelector(".modal-wrap").remove()');
@@ -422,7 +513,7 @@ await t('11 张截图', async () => {
   await P.offline(true); await P.eval('dispatchEvent(new Event("offline"))'); await P.hash('#/'); await P.eval('PP.render()'); await P.shot('offline');
   await P.offline(false);
   await P.size(1366, 768, false); await P.hash('#/puzzle/demo'); await P.eval('PP.render()'); await P.shot('pc-1366');
-  for (const n of ['home', 'puzzle', 'piece-evidence', 'note-quick', 'scatter-box', 'card-steps', 'card-feynman', 'review', 'settings-sync', 'offline', 'pc-1366']) {
+  for (const n of ['home', 'home-auto', 'suggest-place', 'piece-refs', 'pair-qr', 'puzzle', 'motion-dawn', 'motion-tide', 'motion-stars', 'motion-still', 'settings-motion', 'piece-evidence', 'note-quick', 'scatter-box', 'card-steps', 'card-feynman', 'review', 'settings-sync', 'offline', 'pc-1366']) {
     assert.ok(fs.existsSync(path.join(SHOTS, n + '.png')), n);
   }
 });

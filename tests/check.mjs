@@ -194,5 +194,38 @@ await t('超过 1MB 的数据也能拉回来', async () => {
 });
 await gh.close();
 
+console.log('电脑自动入账与动效模型（v1.2）');
+const Mo = await import('../motion.js');
+await t('电脑自动记的不算进任何指标；在 App 里处理过建议的那天算用过', () => {
+  const now = Date.now(), wk = C.weekKey(now);
+  const base = [{ id: 'n', type: 'note', at: now, text: 'x' }];
+  const autos = [
+    { id: 'a1', type: 'auto', kind: 'day', day: C.dayStr(now), lines: ['x'], createdAt: now, at: now },
+    { id: 'a2', type: 'auto', kind: 'suggest', pieceId: 'p', dismissed: false, createdAt: now },
+  ];
+  assert.deepEqual(C.computeMetrics([...base, ...autos], wk, now), C.computeMetrics(base, wk, now));
+  const y = now - 86400000;
+  const m = C.computeMetrics([...base, { ...autos[1], dismissed: true, dismissedAt: y }], wk, now);
+  assert.equal(m.usageDays14, 2);
+});
+await t('四种动效模型都能画；潮汐水位随进度升高；星图星星数 = 拼上的块数', () => {
+  const done = n => Array.from({ length: n }, (_, i) => ({ i, at: i, cx: (i % 3) * 100 + 50, cy: Math.floor(i / 3) * 100 + 50 }));
+  for (const m of Mo.MODELS) {
+    const s = Mo.scene(m.id, 'seed', 300, 300, 'u', { p: 0.5, u: 0.3, focus: true, newest: -1, done: done(4) });
+    assert.ok(s.body.length > 200 && s.defs.length > 50, m.id);
+  }
+  const lv = p => Number(Mo.scene('tide', 'seed', 300, 300, 'u', { p, u: 0, done: [] }).body.match(/class="m-wave back"[^>]*d="M[-\d.]+ ([\d.]+)/)[1]);
+  assert.ok(lv(0.8) < lv(0.2), '水位应随进度升高');
+  const st = Mo.scene('stars', 'seed', 300, 300, 'u', { p: 0.5, u: 0, done: done(5) });
+  assert.equal((st.body.match(/class="m-star/g) || []).length, 5);
+  assert.equal((st.body.match(/class="m-line/g) || []).length, 4);
+});
+await t('落后程度：按时为 0，时间过半进度为 0 时明显落后', () => {
+  const now = Date.now();
+  const pz = { createdAt: now - 10 * 86400000, deadline: C.dayStr(now + 10 * 86400000) };
+  assert.equal(Mo.urgency(pz, 0.9, now), 0);
+  assert.ok(Mo.urgency(pz, 0, now) > 0.7);
+});
+
 console.log(`\n数据层自测：通过 ${pass}，失败 ${fail}`);
 process.exit(fail ? 1 : 0);

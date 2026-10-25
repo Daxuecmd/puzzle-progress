@@ -13,6 +13,10 @@
   --ok: #3F7D5C;
   --pz: #3E5D83;
   --nav-h: 64px;
+  /* 动效：按下去立刻缩，松手用弹簧回位；只在用户动手和拼上那一刻动 */
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
+  --spring: linear(0, .009, .035 2.1%, .141, .281 6.7%, .723 12.9%, .938 16.7%, 1.017, 1.077, 1.121, 1.149 24.3%, 1.159, 1.163, 1.161, 1.154 29.9%, 1.129 32.8%, 1.051 39.6%, 1.017 43.1%, .991, .977 51%, .975 57.1%, .997 69.8%, 1.003 76.9%, 1);
+  --spring-soft: linear(0, .1 3%, .37 8%, .68 14%, .9 21%, 1.02 29%, 1.04 35%, 1.02 45%, 1 60%, 1);
   --sans: system-ui, "HarmonyOS Sans SC", "OPPO Sans", "MiSans", "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
 }
 
@@ -75,12 +79,103 @@ h2 { font-size: 18px; line-height: 1.4; font-weight: 750; margin: 0; }
 .piece-hero { width: 168px; margin: 4px auto 18px; display: block; }
 .piece-hero .ghost { filter: url(#mono); opacity: .5; }
 
-.placed-overlay { position: fixed; inset: 0; background: rgba(243, 244, 240, .94); display: grid; place-items: center; z-index: 60; }
-.placed-overlay svg { width: 190px; overflow: visible; animation: snap .8s cubic-bezier(.2, 1.35, .4, 1) both; }
-.placed-overlay p { text-align: center; margin: 18px 0 0; font-size: 18px; font-weight: 750; animation: fade .4s .45s both; }
-.placed-overlay p span { display: block; font-size: 14px; font-weight: 400; color: var(--ink-2); }
-@keyframes snap { from { transform: translate(70px, -110px) rotate(-16deg) scale(.82); opacity: 0; } }
+/* 拼上那一刻：这块从下方转着飞进整幅图里自己的空位，卡住时边缘一闪，光扫过画面，数字跳一格 */
+.placed-overlay { position: fixed; inset: 0; background: rgba(243, 244, 240, .96); display: grid; place-items: center; z-index: 60; padding: 24px; cursor: pointer; animation: fade .25s var(--ease-out) both; }
+.placed-stage { width: min(340px, 84vw); text-align: center; }
+.placed-stage .tray { padding: 10px; animation: rise .55s var(--spring-soft) both; }
+/* 飞行要看得清：用带一点回弹的曲线走完 .75 秒，而不是弹簧（弹簧 130ms 就到位了） */
+.placed-overlay .arrive { transform-box: fill-box; transform-origin: 50% 50%; animation: fly-in .75s .15s cubic-bezier(.3, 1.25, .45, 1) both; }
+.placed-overlay .arrive-edge { fill: none; stroke: #fff; stroke-width: 5; stroke-linejoin: round; stroke-opacity: 0; animation: flash .7s .82s var(--ease-out) both; }
+.placed-overlay .sheen { transform-box: fill-box; animation: sweep 1.1s .95s cubic-bezier(.45, 0, .25, 1) both; }
+.placed-count { margin: 22px 0 0; font-size: 16px; color: var(--ink-3); font-weight: 650; }
+.placed-count b { display: inline-block; font-size: 46px; line-height: 1; font-weight: 800; color: var(--ink); letter-spacing: -.02em; }
+.placed-count b.bump { animation: bump .55s var(--spring) both; }
+.placed-sub { margin: 10px 0 0; font-size: 17px; font-weight: 750; animation: fade .4s 1s both; }
+.placed-sub span { display: block; margin-top: 2px; font-size: 14px; font-weight: 400; color: var(--ink-2); }
+@keyframes fly-in { 0% { transform: translate(22%, 135%) rotate(-26deg) scale(1.18); opacity: 0; } 12% { opacity: 1; } 100% { transform: none; opacity: 1; } }
+@keyframes flash { 0%, 100% { stroke-opacity: 0; } 25% { stroke-opacity: .95; } }
+@keyframes sweep { from { transform: translateX(0); } to { transform: translateX(270%); } }
+@keyframes bump { from { transform: translateY(45%) scale(.7); opacity: .2; } }
+@keyframes rise { from { transform: translateY(14px) scale(.97); opacity: 0; } }
 @keyframes fade { from { opacity: 0; } }
+
+/* ---------- 动效模型（motion.js 画画面，这里让它动） ---------- */
+/* 拼块本身：正在做的那块描边像蚂蚁线一样走、底色轻轻呼吸；静物只呼吸 */
+.jig .doing .seam { animation: m-march 1.1s linear infinite; }
+.jig .doing .fill { animation: m-breathe 3.2s ease-in-out infinite alternate; }
+.jig.m-still .doing .seam { animation: none; }
+@keyframes m-march { to { stroke-dashoffset: -13; } }
+@keyframes m-breathe { to { fill-opacity: .62; } }
+.jig.mini .doing .seam { animation: none; }
+/* 打开拼图页时，已拼上的块依次亮出来 */
+.jig .m-cover { fill: var(--slot); animation: m-uncover .5s calc(var(--k) * 70ms + 120ms) var(--ease-out) both; }
+/* 各模型亮出来的样子不同：晨光从上往下淡出，潮汐像退潮一样往下沉，星图像星星一样一闪亮起 */
+.jig.m-tide .m-cover { animation-name: m-sink; }
+.jig.m-stars .m-cover { fill: #23233C; animation-name: m-blink; animation-duration: .7s; }
+@keyframes m-sink { to { opacity: 0; transform: translateY(14px); } }
+@keyframes m-blink { 30% { opacity: .2; } 45% { opacity: .7; } to { opacity: 0; } }
+@keyframes m-uncover { to { opacity: 0; } }
+
+/* 晨光 */
+.m-cloud { animation: m-drift var(--d, 46s) ease-in-out infinite alternate; }
+.focusing .m-cloud { animation-duration: calc(var(--d, 46s) * 2.2); }
+@keyframes m-drift { to { transform: translateX(var(--dx, 24px)); } }
+.m-glow { transform-box: fill-box; transform-origin: center; animation: m-glow 6s ease-in-out infinite alternate; }
+@keyframes m-glow { to { transform: scale(1.14); opacity: .5; } }
+.rising .m-sun { animation: m-rise 1.5s .95s var(--ease-out) both; }
+@keyframes m-rise { from { transform: translateY(var(--rise, 0)); } }
+
+/* 潮汐 */
+.m-wave { animation: m-wave var(--d, 7s) linear infinite; }
+.focusing .m-wave { animation-duration: calc(var(--d, 7s) * 1.8); }
+@keyframes m-wave { to { transform: translateX(calc(-1 * var(--L))); } }
+.m-glint { animation: m-glint 3.4s var(--k, 0s) ease-in-out infinite; }
+@keyframes m-glint { 50% { opacity: .1; } }
+.rising .m-water { animation: m-rise 1.5s .95s var(--ease-out) both; }
+
+/* 星图 */
+.m-tw { animation: m-tw 4s var(--k, 0s) ease-in-out infinite; }
+@keyframes m-tw { 50% { opacity: .15; } }
+.m-aurora { animation: m-aurora 14s ease-in-out infinite alternate; }
+@keyframes m-aurora { to { transform: translateY(6px) skewX(-6deg); opacity: .25; } }
+.m-star circle:first-child { transform-box: fill-box; transform-origin: center; animation: m-glow 3.6s ease-in-out infinite alternate; }
+.rising .m-star.new { transform-box: fill-box; transform-origin: center; animation: m-pop .7s 1s var(--spring) both; }
+.rising .m-line.new { animation: m-draw .9s .95s var(--ease-out) both; }
+@keyframes m-pop { from { transform: scale(0); opacity: 0; } }
+@keyframes m-draw { from { stroke-dashoffset: var(--len); } }
+.m-shoot { opacity: 0; animation: m-shoot 9s 2s ease-in infinite; }
+@keyframes m-shoot { 0% { opacity: 0; transform: translate(0, 0); } 2% { opacity: 1; } 8% { opacity: 0; transform: translate(-90px, 44px); } 100% { opacity: 0; } }
+
+/* 小图标里的画面不动 */
+.pc *, .piece-hero * { animation: none !important; }
+
+/* ---------- 页面背景：跟主线的进度、落后、专注走 ---------- */
+#ambient { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+#app { position: relative; z-index: 1; }
+#ambient::before, #ambient::after { content: ""; position: absolute; }
+/* 晨光：顶上一团暖光，进度越多越亮；落后时右下角泛起暮色 */
+.amb-dawn::before { left: -30%; right: -30%; top: -38vh; height: 78vh; background: radial-gradient(closest-side, var(--amb-a), transparent); opacity: calc(.18 + .5 * var(--amb-p)); animation: amb-float 26s ease-in-out infinite alternate; }
+.amb-dawn::after { right: -30%; bottom: -30vh; width: 90vw; height: 70vh; background: radial-gradient(closest-side, var(--amb-b), transparent); opacity: calc(.4 * var(--amb-u)); animation: amb-float 33s ease-in-out infinite alternate-reverse; }
+/* 潮汐：底部一片海色，进度越多涨得越高 */
+.amb-tide::before { left: -10%; right: -10%; bottom: -6vh; height: calc(16vh + 46vh * var(--amb-p)); background: linear-gradient(to top, var(--amb-a), transparent); opacity: .2; border-radius: 50% 50% 0 0 / 22px 22px 0 0; animation: amb-swell calc(10s - 5s * var(--amb-u)) ease-in-out infinite alternate; transition: height 1.4s var(--ease-out); }
+.amb-tide::after { left: -20%; right: -20%; top: -30vh; height: 60vh; background: radial-gradient(closest-side, var(--amb-b), transparent); opacity: .35; }
+/* 星图：顶上一层夜色，落后时极光偏红 */
+.amb-stars::before { left: 0; right: 0; top: 0; height: 46vh; background: linear-gradient(to bottom, var(--amb-a), transparent); opacity: calc(.12 + .18 * var(--amb-p)); }
+.amb-stars::after { left: -20%; right: -20%; top: -10vh; height: 40vh; background: radial-gradient(closest-side, var(--amb-b), transparent); opacity: calc(.1 + .14 * var(--amb-u)); animation: amb-float 18s ease-in-out infinite alternate; }
+#ambient.focusing::before, #ambient.focusing::after { animation-duration: 60s; }
+@keyframes amb-float { to { transform: translate(4vw, 3vh) scale(1.08); } }
+@keyframes amb-swell { to { transform: translateY(-1.6vh) scaleY(1.05); } }
+
+/* 设置：动效模型 */
+.motion-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.motion-opt { border: 0; background: var(--surface); border-radius: 20px; padding: 10px 10px 14px; text-align: left; cursor: pointer; color: var(--ink); box-shadow: inset 0 0 0 1.5px transparent; transition: box-shadow .2s, transform .5s var(--spring-soft); }
+.motion-opt .pv { border-radius: 12px; overflow: hidden; margin-bottom: 10px; }
+.motion-opt .pv .jig { overflow: hidden; }
+.motion-opt b { display: block; font-size: 16px; font-weight: 750; padding: 0 4px; }
+.motion-opt span { display: block; font-size: 12.5px; line-height: 1.5; color: var(--ink-2); padding: 2px 4px 0; }
+.motion-opt.on { box-shadow: inset 0 0 0 2px var(--ink); }
+.motion-opt:active { transform: scale(.97); transition-duration: .08s; }
+.motion-opt.just .pv { animation: rise .5s var(--spring-soft) both; }
 
 /* 小拼块图标（列表行首） */
 .pc { width: 34px; height: 34px; flex: none; overflow: visible; }
@@ -110,14 +205,49 @@ h2 { font-size: 18px; line-height: 1.4; font-weight: 750; margin: 0; }
 .meta-line .warn { color: var(--warn); font-weight: 600; }
 .empty { color: var(--ink-2); padding: 18px 0; }
 
-/* ---------- 专注 ---------- */
-.focus { background: var(--ink); color: #fff; border-radius: 22px; padding: 16px 18px 18px; margin-bottom: 18px; }
-.focus .what { font-size: 13.5px; opacity: .75; }
-.focus .clock { font-size: 40px; font-weight: 750; letter-spacing: .02em; font-variant-numeric: tabular-nums; line-height: 1.15; margin: 2px 0 12px; }
-.focus .bar { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .16); overflow: hidden; }
-.focus .bar i { display: block; height: 100%; background: #fff; border-radius: 2px; }
-.focus .foot { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; font-size: 13px; opacity: .85; }
-.focus .btn { background: rgba(255, 255, 255, .14); color: #fff; }
+/* ---------- 专注：顶部一条 ---------- */
+.focus { position: relative; display: flex; align-items: center; gap: 12px; background: var(--ink); color: #fff; border-radius: 18px; padding: 9px 9px 11px 16px; margin-bottom: 14px; overflow: hidden; }
+.focus .beat { width: 8px; height: 8px; border-radius: 50%; background: #fff; flex: none; animation: beat 2.4s var(--ease-out) infinite; }
+@keyframes beat { 0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, .5); } 70%, 100% { box-shadow: 0 0 0 9px rgba(255, 255, 255, 0); } }
+.focus .what { flex: 1; min-width: 0; font-size: 14.5px; font-weight: 600; cursor: pointer; }
+.focus .clock { font-size: 17px; font-weight: 750; font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+.focus .btn { background: rgba(255, 255, 255, .14); color: #fff; padding: 7px 13px; }
+.focus .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255, 255, 255, .1); }
+.focus .bar i { display: block; height: 100%; background: rgba(255, 255, 255, .85); transition: width 1s linear; }
+
+/* ---------- 首页 ---------- */
+.section.first { margin-top: 6px; }
+.suggest { display: flex; gap: 14px; align-items: flex-start; background: var(--surface); border-radius: 20px; padding: 16px 18px; margin-bottom: 20px; box-shadow: inset 0 0 0 1.5px var(--ink); animation: drop-in .6s var(--spring-soft) both; }
+.suggest .pc { width: 44px; height: 44px; animation: nudge .9s .25s var(--spring) both; }
+.suggest .name { font-weight: 700; line-height: 1.45; }
+.suggest .small { margin: 2px 0 12px; }
+.suggest.leaving { animation: leave .26s var(--ease-out) forwards; }
+@keyframes drop-in { from { transform: translateY(-8px) scale(.98); opacity: 0; } }
+@keyframes nudge { from { transform: translate(-6px, 6px) rotate(-18deg); } }
+@keyframes leave { to { transform: translateX(28px); opacity: 0; } }
+
+.today-row .pc { width: 44px; height: 44px; }
+.today-row .name { font-size: 16.5px; }
+
+.main-row { display: flex; align-items: center; gap: 16px; background: var(--surface); border-radius: 24px; padding: 12px 18px 12px 12px; margin-top: 18px; cursor: pointer;
+  box-shadow: 0 1px 0 rgba(29, 36, 51, .04), 0 14px 34px -20px rgba(29, 36, 51, .3); }
+.main-row .thumb { width: 118px; flex: none; }
+.main-row .grow { flex: 1; min-width: 0; }
+.main-row .count b { font-size: 32px; line-height: 1; font-weight: 800; letter-spacing: -.02em; }
+.main-row .count span { font-size: 15px; font-weight: 650; color: var(--ink-3); }
+.main-row .name { font-size: 16px; font-weight: 700; line-height: 1.4; margin: 8px 0 2px; }
+
+.auto-item { padding: 14px 0; }
+.auto-item + .auto-item { border-top: 1px solid var(--line); }
+.auto-item .proj { font-weight: 650; font-size: 14.5px; }
+.auto-item ul { margin: 4px 0 0; padding: 0; list-style: none; }
+.auto-item li { position: relative; padding-left: 14px; font-size: 13.5px; line-height: 1.6; color: var(--ink-2); }
+.auto-item li::before { content: ""; position: absolute; left: 2px; top: .72em; width: 5px; height: 5px; border-radius: 50%; background: #C5C9C0; }
+.auto-item .link { margin-top: 6px; font-size: 13px; }
+
+/* ---------- 扫码开同步 ---------- */
+.qr-wrap { width: min(300px, 74vw); margin: 0 auto; background: #fff; border-radius: 20px; padding: 8px; box-shadow: inset 0 0 0 1px var(--line); animation: rise .5s .05s var(--spring-soft) both; }
+.qr { display: block; width: 100%; height: auto; }
 
 /* ---------- 按钮 ---------- */
 .btn { border: 0; border-radius: 14px; padding: 12px 18px; cursor: pointer; background: var(--ink); color: #fff; font-weight: 650; font-size: 15px; line-height: 1.3; text-align: center; }
@@ -154,6 +284,7 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.55; }
 /* ---------- 证据 ---------- */
 .evi img, .evi .ico { width: 52px; height: 52px; border-radius: 12px; object-fit: cover; background: #EEF0EB; flex: none; display: grid; place-items: center; font-size: 13px; font-weight: 700; color: var(--ink-2); }
 .evi a { color: var(--ink); word-break: break-all; }
+.evi .path { word-break: break-all; }
 
 /* ---------- 经验卡：做 卡 讲 送 ---------- */
 .motto { margin: 6px 2px 22px; }
@@ -206,15 +337,23 @@ nav.tabs a.on { color: var(--ink); font-weight: 650; }
 
 /* ---------- 弹层 ---------- */
 .modal-wrap { position: fixed; inset: 0; background: rgba(29, 36, 51, .32); z-index: 50; display: flex; align-items: flex-end; justify-content: center; }
-.modal { background: var(--surface); width: 100%; max-width: 540px; border-radius: 26px 26px 0 0; padding: 10px 20px calc(20px + env(safe-area-inset-bottom)); max-height: 88vh; overflow-y: auto; animation: up .22s ease-out; }
+.modal-wrap { animation: fade .2s var(--ease-out) both; }
+.modal { background: var(--surface); width: 100%; max-width: 540px; border-radius: 26px 26px 0 0; padding: 10px 20px calc(20px + env(safe-area-inset-bottom)); max-height: 88vh; overflow-y: auto; animation: up .5s var(--spring-soft) both; }
 .modal::before { content: ""; display: block; width: 38px; height: 4px; border-radius: 2px; background: #D7DAD3; margin: 0 auto 14px; }
 .modal h2 { margin-bottom: 14px; }
-@keyframes up { from { transform: translateY(40px); opacity: .5; } }
+@keyframes up { from { transform: translateY(60%); opacity: .4; } }
 @media (min-width: 700px) {
   .modal-wrap { align-items: center; }
   .modal { border-radius: 26px; }
 }
-.toast { position: fixed; left: 50%; bottom: calc(var(--nav-h) + 30px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 18px; border-radius: 999px; font-size: 14px; z-index: 70; max-width: 86vw; text-align: center; pointer-events: none; }
+.toast { position: fixed; left: 50%; bottom: calc(var(--nav-h) + 30px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 18px; border-radius: 999px; font-size: 14px; z-index: 70; max-width: 86vw; text-align: center; pointer-events: none; animation: toast-in .45s var(--spring-soft) both; }
+@keyframes toast-in { from { transform: translate(-50%, 12px) scale(.94); opacity: 0; } }
+
+/* 按下立刻缩一点，松手弹回 */
+.btn, .chip, .step, .fab, .row-item.tap, .tray.tap, .main-row, .glyph { transition: transform .5s var(--spring-soft), background-color .2s, box-shadow .2s; }
+.btn:active:not(:disabled), .chip:active, .step:active:not(:disabled) { transform: scale(.95); transition-duration: .08s; }
+.fab:active { transform: scale(.9); transition-duration: .08s; }
+.row-item.tap:active, .main-row:active, .tray.tap:active { transform: scale(.985); transition-duration: .1s; }
 
 details summary { cursor: pointer; }
 .steps-list { padding-left: 20px; color: var(--ink-2); margin: 10px 0 14px; }

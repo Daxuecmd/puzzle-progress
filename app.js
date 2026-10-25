@@ -1,8 +1,9 @@
 import * as C from './core.js';
 import * as DB from './db.js';
 import * as S from './sync.js';
+import * as M from './motion.js';
 
-export const VERSION = '1.1.1';
+export const VERSION = '1.2.0';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -62,6 +63,11 @@ const isToday = p => p.today === C.dayStr() && p.status !== 'done';
 const todayPieces = () => live('piece').filter(isToday).filter(p => ['main', 'side'].includes(get(p.puzzleId)?.lane));
 const pieceState = p => (p.status === 'done' ? 'done' : isToday(p) || activeFocus()?.pieceId === p.id ? 'doing' : 'empty');
 const PIECE_STATE = { empty: '空位', doing: '进行中', done: '已拼上' };
+
+// 电脑自动入账写进来的记录（type: 'auto'），格式见工单区 D002
+const autos = kind => live('auto').filter(a => a.kind === kind);
+const todayAutos = () => autos('day').filter(a => a.day === C.dayStr()).sort((a, b) => String(a.projectName).localeCompare(String(b.projectName), 'zh'));
+const suggestions = () => autos('suggest').filter(s => !s.dismissed && get(s.pieceId) && get(s.pieceId).status !== 'done');
 
 function focusTotal(pieceId) {
   return live('focus').filter(f => f.pieceId === pieceId)
@@ -318,28 +324,58 @@ function top(title, { back, home } = {}) {
 
 let svgSeq = 0;
 
-// 整幅拼图：拼上的块露出这幅拼图自己的风景，空位是灰的
-function jigsawSvg(pz, { mini = false } = {}) {
+// 动效模型存在这台设备上（设置里选）
+const motionModel = () => { try { return M.modelOf(localStorage.getItem('pp.motion')).id; } catch { return M.DEFAULT_MODEL; } };
+
+// 画面要用的任务情况：进度、落后程度、专注中、拼上的块（星图按先后连线）
+function sceneState(pz, ps, J, arriving) {
+  const done = ps.map((p, i) => ({ p, i })).filter(x => x.p.status === 'done');
+  const p = ps.length ? done.length / ps.length : 0;
+  const ai = ps.findIndex(x => x.id === arriving);
+  return {
+    p,
+    p0: ai >= 0 ? Math.max(0, done.length - 1) / ps.length : null,
+    u: M.urgency(pz, p),
+    focus: !!activeFocus(),
+    newest: ai >= 0 ? ai : -1,
+    done: done.map(({ p: x, i }) => ({ i, at: x.doneAt, cx: J.pieces[i].cx, cy: J.pieces[i].cy })),
+  };
+}
+
+// 整幅拼图：拼上的块露出这幅拼图自己的画面，空位是灰的；画面按动效模型跟着任务情况动
+// arriving：刚拼上的那块先空着，再从下方飞进自己的位置（落位动画用）
+// reveal：打开拼图页时已拼上的块按模型的顺序依次亮出来
+function jigsawSvg(pz, { mini = false, arriving = null, model = motionModel(), reveal = false } = {}) {
   const ps = piecesOf(pz.id);
   if (!ps.length) return `<div class="empty">还没有拼块，先在下面加一块。</div>`;
   const J = C.jigsaw(ps.length);
   const W = J.cols * J.size, H = J.rows * J.size;
   const uid = 'j' + (++svgSeq);
-  const art = C.picture(pz.id, W, H, uid);
-  const sts = ps.map(pieceState);
+  const st = sceneState(pz, ps, J, arriving);
+  const art = M.scene(model, pz.id, W, H, uid, st);
+  const sts = ps.map(p => (p.id === arriving ? 'empty' : pieceState(p)));
   const doneIdx = sts.map((s, i) => (s === 'done' ? i : -1)).filter(i => i >= 0);
+  const ai = ps.findIndex(p => p.id === arriving);
+  // 亮出来的顺序：晨光从上往下，潮汐从下往上，星图按拼上的先后
+  const revealOrder = model === 'tide' ? [...doneIdx].reverse() : model === 'stars' ? [...doneIdx].sort((a, b) => (ps[a].doneAt || 0) - (ps[b].doneAt || 0)) : doneIdx;
+  const covers = reveal && model !== 'still' ? revealOrder.map((i, k) => `<path class="m-cover" style="--k:${k}" d="${J.pieces[i].d}"/>`).join('') : '';
   const slots = J.pieces.map((g, i) => (sts[i] === 'done' ? '' : `<g class="${sts[i]}"><path class="fill" d="${g.d}"/></g>`)).join('');
   // 进行中的块描边最后画，免得被邻块的缝盖住
   const order = J.pieces.map((_, i) => i).sort((a, b) => (sts[a] === 'doing') - (sts[b] === 'doing'));
   const seams = order.map(i => { const g = J.pieces[i]; return `<g class="${sts[i]} ${mini ? '' : 'tap'}" data-piece="${ps[i].id}" ${mini ? '' : `data-act="go" data-to="#/piece/${ps[i].id}"`}>
       <path class="seam" d="${g.d}" style="fill:transparent"/>${mini || sts[i] === 'done' ? '' : `<text x="${g.cx}" y="${g.cy}">${i + 1}</text>`}</g>`; }).join('');
-  return `<svg class="jig ${mini ? 'mini' : ''}" viewBox="-3 -3 ${W + 6} ${H + 6}" role="img" aria-label="${esc(pz.name)}：已拼 ${doneIdx.length} / ${ps.length}">
+  return `<svg class="jig ${mini ? 'mini' : ''} m-${model} ${st.focus ? 'focusing' : ''} ${ai >= 0 ? 'rising' : ''}" viewBox="-3 -3 ${W + 6} ${H + 6}" role="img" aria-label="${esc(pz.name)}：已拼 ${doneIdx.length} / ${ps.length}">
     <defs>${art.defs}<clipPath id="${uid}-c">${doneIdx.map(i => `<path d="${J.pieces[i].d}"/>`).join('')}</clipPath>
-      <clipPath id="${uid}-all">${J.pieces.map(g => `<path d="${g.d}"/>`).join('')}</clipPath></defs>
+      <clipPath id="${uid}-all">${J.pieces.map(g => `<path d="${g.d}"/>`).join('')}</clipPath>
+      ${ai >= 0 ? `<clipPath id="${uid}-a"><path d="${J.pieces[ai].d}"/></clipPath>
+      <linearGradient id="${uid}-sh" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".7"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>` : ''}</defs>
     <g class="ghost-art" clip-path="url(#${uid}-all)">${art.body}</g>
     ${slots}
     ${doneIdx.length ? `<g clip-path="url(#${uid}-c)">${art.body}</g>` : ''}
+    ${covers}
     ${seams}
+    ${ai >= 0 ? `<g class="arrive"><g clip-path="url(#${uid}-a)">${art.body}</g><path class="arrive-edge" d="${J.pieces[ai].d}"/></g>
+      <g clip-path="url(#${uid}-all)"><rect class="sheen" x="${-W * 0.6}" y="0" width="${W * 0.6}" height="${H}" fill="url(#${uid}-sh)"/></g>` : ''}
   </svg>`;
 }
 
@@ -357,7 +393,7 @@ function pieceArt(p, { big = false } = {}) {
   const st = pieceState(p);
   let inner;
   if (st === 'done') {
-    const art = C.picture(pz.id, W, H, uid);
+    const art = M.scene(motionModel(), pz.id, W, H, uid, sceneState(pz, ps, J, null));
     inner = `<defs>${art.defs}<clipPath id="${uid}-c"><path d="${g.d}"/></clipPath></defs><g clip-path="url(#${uid}-c)">${art.body}</g>`;
   } else {
     inner = `<path d="${g.d}" fill="${st === 'doing' ? '#F7F8F5' : 'var(--slot)'}" ${st === 'doing' ? 'stroke="var(--ink)" stroke-width="3" stroke-dasharray="7 6"' : ''}/>`;
@@ -372,14 +408,16 @@ function progress(pz) {
   return { done: ps.filter(p => p.status === 'done').length, total: ps.length };
 }
 
+// 专注中：顶部一条细条，不抢拼图和今天的块
 function focusBar(f) {
   const p = get(f.pieceId);
   const pctDone = Math.min(100, ((Date.now() - f.start) / f.planned) * 100);
-  return `<div class="focus">
-    <div class="what ellipsis">正在专注：${esc(p?.name || '')}</div>
+  return `<div class="focus" title="满 2 小时自动结束">
+    <span class="beat" aria-hidden="true"></span>
+    <div class="what ellipsis tap" data-act="go" data-to="#/piece/${f.pieceId}">${esc(p?.name || '')}</div>
     <div class="clock" data-clock="${f.id}">${C.fmtClock(Date.now() - f.start)}</div>
+    <button class="btn sm" data-act="focus-end" data-id="${f.id}">结束</button>
     <div class="bar"><i data-bar="${f.id}" style="width:${pctDone.toFixed(1)}%"></i></div>
-    <div class="foot"><span>满 2 小时自动结束</span><button class="btn sm" data-act="focus-end" data-id="${f.id}">结束专注</button></div>
   </div>`;
 }
 
@@ -411,20 +449,25 @@ function pageHome() {
     return h;
   }
 
-  const pr = progress(m);
-  h += `<div class="puzzle-head"><h1>${esc(m.name)}</h1>
-    <p class="lede">${esc(daysLeft(m.deadline))}，${esc(m.acceptor)}说了算</p></div>
-  <div class="tray tap" style="margin-top:16px" data-act="go" data-to="#/puzzle/${m.id}" id="home-main">${jigsawSvg(m, { mini: true })}</div>
-  <p class="small" style="margin:10px 4px 0"><b class="num" style="color:var(--ink);font-size:17px">${pr.done}</b> / ${pr.total} 块已拼上</p>`;
+  // 第一屏的顺序：能拼上的 → 今天做这几块 → 主线拼图一行 → 今天电脑上做了
+  for (const s of suggestions()) {
+    const p = get(s.pieceId);
+    h += `<div class="suggest" id="suggest-${esc(s.id)}">
+      ${pieceArt(p)}
+      <div class="grow"><div class="name">可以拼上：${esc(p.name)}</div><div class="small">${esc(s.text || '')}</div>
+        <div class="btns"><button class="btn sm" data-act="suggest-place" data-id="${esc(s.id)}">拼上</button>
+        <button class="btn sm soft" data-act="suggest-dismiss" data-id="${esc(s.id)}">忽略</button></div></div>
+    </div>`;
+  }
 
-  h += `<div class="section" id="home-today"><div class="section-head"><h2>今天做这几块</h2>${today.length ? `<button class="link" data-act="pick-today">调整</button>` : ''}</div>`;
+  h += `<div class="section first" id="home-today"><div class="section-head"><h2>今天做这几块</h2>${today.length ? `<button class="link" data-act="pick-today">调整</button>` : ''}</div>`;
   if (!today.length) {
     h += `<div class="sheet pad"><p style="margin:0 0 14px;color:var(--ink-2)">开工前挑 1 到 3 块，今天只做这几块。</p>
       <button class="btn" data-act="pick-today">挑今天的块</button></div>`;
   } else {
     h += `<div class="sheet">${today.map(p => {
       const focusing = f?.pieceId === p.id;
-      return `<div class="row-item">
+      return `<div class="row-item today-row">
         ${pieceArt(p)}
         <div class="grow tap" data-act="go" data-to="#/piece/${p.id}"><div class="name ellipsis">${esc(p.name)}</div>
           <div class="faint">${get(p.puzzleId)?.lane === 'side' ? '副线，' : ''}已专注 ${C.fmtDuration(focusTotal(p.id))}，记了 ${notesOf(p.id).length} 条</div></div>
@@ -433,6 +476,27 @@ function pageHome() {
     }).join('')}</div>`;
   }
   h += `</div>`;
+
+  const pr = progress(m);
+  h += `<div class="main-row tap" data-act="go" data-to="#/puzzle/${m.id}" id="home-main">
+    <div class="thumb">${jigsawSvg(m, { mini: true })}</div>
+    <div class="grow"><div class="count"><b class="num">${pr.done}</b><span> / ${pr.total}</span></div>
+      <div class="name">${esc(m.name)}</div>
+      <div class="faint">${esc(daysLeft(m.deadline))}，${esc(m.acceptor)}说了算</div></div>
+  </div>`;
+
+  const ta = todayAutos();
+  if (ta.length) {
+    h += `<div class="section" id="home-auto"><div class="section-head"><h2>今天电脑上做了</h2><span class="faint">电脑自动记下</span></div>
+      <div class="sheet">${ta.map(a => {
+        const lines = a.lines || [];
+        const open = state.ui.autoOpen?.[a.id];
+        const shown = open ? lines : lines.slice(0, 3);
+        return `<div class="auto-item"><div class="proj">${esc(a.projectName || a.project)}</div>
+          <ul>${shown.map(l => `<li>${esc(l)}</li>`).join('')}</ul>
+          ${lines.length > 3 ? `<button class="link quiet" data-act="auto-more" data-id="${esc(a.id)}">${open ? '收起' : `还有 ${lines.length - 3} 条`}</button>` : ''}</div>`;
+      }).join('')}</div></div>`;
+  }
 
   h += `<div class="meta-line">
     <a href="#/scatter" class="${scat.length ? 'warn' : ''}">${scat.length ? `${scat.length} 条记录没归位` : '散块盒是空的'}</a>
@@ -477,6 +541,14 @@ function pagePuzzles() {
   return h;
 }
 
+// 每次打开 App 后第一次看某幅拼图，已拼上的块依次亮出来；之后不再重复
+function firstLook(id) {
+  state.ui.looked = state.ui.looked || new Set();
+  if (state.ui.looked.has(id)) return false;
+  state.ui.looked.add(id);
+  return true;
+}
+
 function pagePuzzle(id) {
   const pz = get(id);
   if (!pz) return top('拼图', { back: '#/puzzles' }) + '<div class="empty">这幅拼图不存在了。</div>';
@@ -486,7 +558,7 @@ function pagePuzzle(id) {
   let h = top(LANES[pz.lane], { back: '#/puzzles' });
   h += `<div class="puzzle-head" style="margin-top:0"><h1>${esc(pz.name)}</h1>
     <p class="lede">已拼 <span class="num">${pr.done} / ${pr.total}</span>，${esc(daysLeft(pz.deadline))}</p></div>
-  <div class="tray" style="margin-top:16px">${jigsawSvg(pz)}</div>
+  <div class="tray" style="margin-top:16px">${jigsawSvg(pz, { reveal: firstLook(pz.id) })}</div>
   <p class="faint" style="text-align:center;margin:10px 0 0">点一块进去</p>`;
 
   h += `<div class="section"><div class="section-head"><h2>拼块</h2><span class="faint num">${ps.length} / ${C.MAX_PIECES}</span></div>
@@ -582,6 +654,8 @@ function pagePiece(id) {
     <div class="faint">第 ${idx + 1} 块，${PIECE_STATE[st]}</div>
     <h1 style="margin-top:4px">${esc(p.name)}</h1>
     <p class="small" style="margin:6px 0 0">专注 ${C.fmtDuration(focusTotal(id))} <button class="link quiet" style="margin-left:10px" data-act="rename-piece" data-id="${id}">改名</button></p>
+    <p class="small" style="margin:2px 0 0" id="piece-refs">${(p.refs || []).length ? `关联工单 <span class="num">${p.refs.map(esc).join('、')}</span> <button class="link quiet" style="margin-left:6px" data-act="edit-refs" data-id="${id}">改</button>`
+      : `<button class="link quiet" data-act="edit-refs" data-id="${id}">关联工单</button>`}</p>
   </div>`;
   if (p.status !== 'done') {
     h += `<div class="btns" style="justify-content:center;margin-top:16px">
@@ -618,6 +692,7 @@ function pagePiece(id) {
 function evidenceRow(p, e) {
   const del = `<button class="link quiet" data-act="evi-del" data-id="${p.id}" data-eid="${e.id}">删除</button>`;
   const when = `<div class="faint">${fmtTime(e.at)}</div>`;
+  if (e.kind === 'link' && !/^https?:/i.test(e.url || '')) return `<div class="row-item evi"><div class="ico">电脑</div><div class="grow"><div>${esc(e.note || e.text || '电脑上的文件')}</div><div class="faint path">${esc(e.url)}</div>${when}</div>${del}</div>`;
   if (e.kind === 'link') return `<div class="row-item evi"><div class="ico">链接</div><div class="grow"><a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.note || e.url)}</a>${when}</div>${del}</div>`;
   if (e.kind === 'image') return `<div class="row-item evi"><img data-file="${esc(e.fileId)}" alt="证据图片"><div class="grow">${esc(e.note || '图片')}${when}</div>${del}</div>`;
   if (e.kind === 'file') return `<div class="row-item evi"><div class="ico">文件</div><div class="grow"><a data-file="${esc(e.fileId)}" download="${esc(e.name)}">${esc(e.name)}</a>${when}</div>${del}</div>`;
@@ -858,16 +933,22 @@ function pageSettings() {
     <div class="field"><label for="s-device">这台设备叫</label><input type="text" id="s-device" value="${esc(c.device)}"></div>
     <div id="s-msg"></div>
     <div class="btns"><button class="btn" data-act="sync-save">保存并测试</button><button class="btn line" data-act="sync-now">立即同步</button></div>
-    <details style="margin-top:18px"><summary class="link">第一次用：怎么拿令牌（约 2 分钟）</summary>
+    ${c.token ? '' : `<details style="margin-top:18px" ${/Android|iPhone/i.test(navigator.userAgent) ? '' : 'open'}><summary class="link">第一次开同步：先在电脑上开（约 2 分钟）</summary>
       <ol class="steps-list">
-        <li>点下面的按钮，打开 GitHub 的新建令牌页，名称、有效期、权限都已填好</li>
+        <li>在电脑上点下面的按钮，打开 GitHub 的新建令牌页，名称、有效期、权限都已填好</li>
         <li>「Repository access」选 <b>Only select repositories</b>，再选 <b>puzzle-progress-data</b></li>
         <li>拉到底点绿色的 <b>Generate token</b>，复制那串 github_pat_ 开头的字</li>
-        <li>粘到上面的「令牌」里，点「保存并测试」。手机和电脑各填一次</li>
+        <li>粘到上面的「令牌」里，点「保存并测试」</li>
+        <li>手机不用再建：电脑上这一页会多出「在手机上开同步」，用手机 Edge 扫码就好</li>
       </ol>
       <a class="btn sm line" href="${esc(TOKEN_URL)}" target="_blank" rel="noopener">打开 GitHub 建令牌页</a>
-    </details>
+    </details>`}
   </div>
+  ${c.token ? `<div class="section" id="pair"><div class="section-head"><h2>在手机上开同步</h2></div><div class="sheet pad">
+    <p class="small" style="margin:0 0 14px">在手机上打开 Edge，点地址栏右边的扫码图标，扫电脑屏幕上的二维码。扫完就同步好了，手机上不用填任何东西。</p>
+    <button class="btn line" data-act="pair-show">显示二维码</button>
+  </div></div>` : ''}
+  ${motionPicker()}
   <div class="section"><div class="section-head"><h2>备份</h2></div><div class="sheet pad">
     <p class="small" style="margin:0 0 14px">整包导出成一个文件，含图片和录音，不含令牌。换手机时导入，也可以用微信发给自己留底。</p>
     <div class="btns"><button class="btn line" data-act="export">导出全部数据</button>
@@ -879,6 +960,24 @@ function pageSettings() {
   </div></div>
   <p class="faint" style="text-align:center;margin-top:24px">拼图推进 ${VERSION}</p>`;
   return h;
+}
+
+// 动效模型：四种画面各配一张实时小样，点一下就换
+function motionPicker() {
+  const m = mainPuzzle();
+  const cur = motionModel();
+  const demo = m && piecesOf(m.id).some(p => p.status === 'done');
+  const preview = id => {
+    if (m) return jigsawSvg(m, { mini: true, model: id });
+    const uid = 'mv' + (++svgSeq);
+    const art = M.scene(id, 'demo', 300, 300, uid, { p: 0.55, u: 0.2, focus: true, newest: -1, done: [0, 1, 3, 4].map(i => ({ i, at: i, cx: (i % 3) * 100 + 50, cy: Math.floor(i / 3) * 100 + 50 })) });
+    return `<svg class="jig m-${id} focusing" viewBox="0 0 300 300" aria-hidden="true"><defs>${art.defs}</defs>${art.body}</svg>`;
+  };
+  return `<div class="section" id="motion"><div class="section-head"><h2>动效</h2><span class="faint">画面跟着任务情况变</span></div>
+    <div class="motion-grid">${M.MODELS.map(x => `<button class="motion-opt ${x.id === cur ? 'on' : ''}" data-act="motion-pick" data-id="${x.id}" aria-pressed="${x.id === cur}">
+      <div class="pv">${preview(x.id)}</div><b>${x.name}</b><span>${x.desc}</span></button>`).join('')}</div>
+    ${demo ? `<button class="btn line block" style="margin-top:12px" data-act="motion-demo">用「${esc(M.modelOf(cur).name)}」看一遍拼上的样子</button>` : ''}
+  </div>`;
 }
 
 // ================= 路由 =================
@@ -894,9 +993,23 @@ function route() {
   return { name: ROUTES[name] ? name : '', id: id && decodeURIComponent(id) };
 }
 
+// 页面背景：跟主线拼图的进度、落后程度、专注状态走
+function paintAmbient() {
+  const el = $('#ambient');
+  if (!el) return;
+  const m = mainPuzzle();
+  const model = motionModel();
+  const ps = m ? piecesOf(m.id) : [];
+  const p = ps.length ? ps.filter(x => x.status === 'done').length / ps.length : 0;
+  const a = M.ambient(model, m?.id || 'none', { p, u: m ? M.urgency(m, p) : 0 });
+  el.className = `${a.cls} ${activeFocus() ? 'focusing' : ''}`;
+  for (const [k, v] of Object.entries(a.vars)) el.style.setProperty(k, v);
+}
+
 function render() {
   const { name, id } = route();
   $('#view').innerHTML = ROUTES[name](id);
+  paintAmbient();
   document.querySelectorAll('nav.tabs a').forEach(a => a.classList.toggle('on', a.dataset.nav === NAV_OF[name]));
   hydrate();
 }
@@ -906,6 +1019,18 @@ function render() {
 const A = {};
 
 A.go = d => { if (location.hash === d.to) render(); else location.hash = d.to; };
+
+// ---- 动效模型 ----
+A['motion-pick'] = d => {
+  try { localStorage.setItem('pp.motion', d.id); } catch { /* 存不了就只这次生效 */ }
+  render();
+  document.querySelector(`.motion-opt[data-id="${d.id}"]`)?.classList.add('just');
+};
+A['motion-demo'] = () => {
+  const m = mainPuzzle();
+  const last = piecesOf(m.id).filter(p => p.status === 'done').sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0))[0];
+  if (last) showPlaced(last, { sub: '这是预览，不会改动数据' });
+};
 
 // ---- 今天 ----
 function todayLimit(p) {
@@ -1269,10 +1394,11 @@ CHANGE['evi-file'] = async (el) => {
   await addEvidence(get(el.dataset.id), { kind: 'file', fileId, name: file.name });
 };
 
-A.place = async d => {
-  const p = get(d.id);
+A.place = d => placePiece(get(d.id));
+
+async function placePiece(p, extra = []) {
   if (!(p.evidence || []).length) return toast('先附一个证据');
-  const recs = [p];
+  const recs = [p, ...extra];
   const f = activeFocus();
   if (f?.pieceId === p.id) { f.end = Math.min(Date.now(), f.start + f.planned); recs.push(f); }
   p.status = 'done';
@@ -1285,16 +1411,87 @@ A.place = async d => {
   }
   await save(...recs);
   const pr = progress(get(p.puzzleId));
+  showPlaced(p, {
+    sub: '趁热写下这块的经验',
+    then: () => {
+      state.ui.cardStep[card.id] = 1;
+      location.hash = `#/card/${card.id}`;
+      if (pr.done === pr.total) toast('整幅拼图拼完了，可以在拼图页宣布完成', 3500);
+    },
+  });
+}
+
+// 落位：整幅拼图里这块空着，它从下方转着飞进来、卡进位置，光从画面上扫过，数字跳一格
+function showPlaced(p, { sub = '', then = () => {}, model } = {}) {
+  const pz = get(p.puzzleId);
+  const pr = progress(pz);
+  closeModal();
   const o = document.createElement('div');
   o.className = 'placed-overlay';
-  o.innerHTML = `<div>${pieceArt(p, { big: true }).replace('piece-hero', '')}<p>拼上了，${pr.done} / ${pr.total}<span>趁热写下这块的经验</span></p></div>`;
+  o.innerHTML = `<div class="placed-stage">
+    <div class="tray">${jigsawSvg(pz, { mini: true, arriving: p.id, model })}</div>
+    <p class="placed-count"><b class="num" data-count>${pr.done - 1}</b><span> / ${pr.total}</span></p>
+    <p class="placed-sub">拼上了「${esc(p.name)}」<span>${esc(sub)}</span></p>
+  </div>`;
   document.body.appendChild(o);
-  setTimeout(() => {
+  const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let gone = false;
+  const go = () => {
+    if (gone) return;
+    gone = true;
     o.remove();
-    state.ui.cardStep[card.id] = 1;
-    location.hash = `#/card/${card.id}`;
-    if (pr.done === pr.total) toast('整幅拼图拼完了，可以在拼图页宣布完成', 3500);
-  }, 1300);
+    then();
+  };
+  o.addEventListener('click', go);
+  setTimeout(() => {
+    const n = o.querySelector('[data-count]');
+    if (n) { n.textContent = pr.done; n.classList.add('bump'); }
+    if (!calm && navigator.userActivation?.hasBeenActive) navigator.vibrate?.(12);
+  }, calm ? 0 : 820);
+  setTimeout(go, calm ? 900 : 2400);
+}
+
+// ---- 电脑自动入账的建议 ----
+A['suggest-place'] = async d => {
+  const s = get(d.id);
+  const p = s && get(s.pieceId);
+  if (!p) return;
+  s.dismissed = true;
+  s.dismissedAt = Date.now();
+  p.evidence = [...(p.evidence || []), ...(s.evidence || []).map(e => ({ ...e, id: C.uid(), at: Date.now(), note: e.note || e.text || s.text || '' }))];
+  if (!p.evidence.length) p.evidence.push({ id: C.uid(), at: Date.now(), kind: 'link', url: s.ref || '', note: s.text || '' });
+  await placePiece(p, [s]);
+};
+A['suggest-dismiss'] = async d => {
+  const s = get(d.id);
+  if (!s) return;
+  s.dismissed = true;
+  s.dismissedAt = Date.now();
+  const el = document.getElementById('suggest-' + s.id);
+  await save(s);
+  if (el && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    el.classList.add('leaving');
+    await new Promise(r => setTimeout(r, 260));
+  }
+  render();
+};
+A['auto-more'] = d => { state.ui.autoOpen = { ...(state.ui.autoOpen || {}), [d.id]: !state.ui.autoOpen?.[d.id] }; render(); };
+
+A['edit-refs'] = d => {
+  const p = get(d.id);
+  openModal(`<h2>关联工单</h2>
+    <p class="small" style="margin:0 0 12px">这块对应工单区里的哪个任务。任务做完时，首页会提示「可以拼上」，证据自动带上。</p>
+    <div class="field"><label for="refs-in">工单编号<span class="hint">可填多个，空格隔开</span></label><input type="text" id="refs-in" value="${esc((p.refs || []).join(' '))}" placeholder="例如 T027" autocomplete="off"></div>
+    <button class="btn block" data-act="refs-save" data-id="${d.id}">保存</button>`);
+  setTimeout(() => $('#refs-in')?.focus(), 50);
+};
+A['refs-save'] = async d => {
+  const p = get(d.id);
+  const raw = $('#refs-in').value.toUpperCase();
+  p.refs = [...new Set(raw.match(/T\d{3}(?:-\d{2})?/g) || [])];
+  closeModal();
+  await save(p);
+  render();
 };
 
 A.unplace = async d => {
@@ -1462,6 +1659,53 @@ A['sync-save'] = async () => {
 };
 A['sync-now'] = () => doSync(true);
 
+// ---- 扫码开同步：电脑显示二维码，手机扫开就带着令牌进来 ----
+const PAIR_BASE = 'https://daxuecmd.github.io/puzzle-progress/';
+
+async function qrSvg(text) {
+  const { default: qrcode } = await import('./vendor/qrcode.js');
+  const q = qrcode(0, 'M');
+  q.addData(text, 'Byte');
+  q.make();
+  const n = q.getModuleCount(), m = 4;
+  let d = '';
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (q.isDark(r, c)) d += `M${c + m} ${r + m}h1v1h-1z`;
+  return `<svg class="qr" viewBox="0 0 ${n + 2 * m} ${n + 2 * m}" shape-rendering="crispEdges" role="img" aria-label="开同步的二维码"><rect width="100%" height="100%" fill="#fff"/><path d="${d}" fill="#1D2433"/></svg>`;
+}
+
+A['pair-show'] = async () => {
+  const c = cfg();
+  if (!c.token) return toast('这台设备还没开同步');
+  const url = `${location.origin.startsWith('http://127.0.0.1') || location.origin.startsWith('http://localhost') ? location.origin + location.pathname : PAIR_BASE}#/pair/${encodeURIComponent(c.token)}${c.repo !== DEFAULT_REPO ? '?repo=' + encodeURIComponent(c.repo) : ''}`;
+  openModal(`<h2>用手机 Edge 扫这个码</h2>
+    <div class="qr-wrap" id="pair-qr">${await qrSvg(url)}</div>
+    <p class="small" style="margin:14px 0 0">手机 Edge 地址栏右边的扫码图标，对准它。扫完手机会自动同步，看到「同步已开好」就行。</p>
+    <p class="faint" style="margin:6px 0 16px">这个码里有你的同步令牌，别让别人拍到。</p>
+    <button class="btn block line" data-act="pair-close">关掉</button>`);
+};
+A['pair-close'] = () => closeModal();
+
+// 地址是 #/pair/<令牌> 时：先把令牌从地址栏和历史里抹掉，再测试、保存、同步
+async function handlePair() {
+  const m = location.hash.match(/^#\/pair\/([^?]+)(?:\?repo=(.+))?$/);
+  if (!m) return false;
+  history.replaceState(null, '', location.pathname + location.search + '#/');
+  const token = decodeURIComponent(m[1]);
+  const repo = m[2] ? decodeURIComponent(m[2]) : cfg().repo;
+  render();
+  toast('正在开同步…', 6000);
+  try {
+    const info = await S.testConnection({ ...cfg(), token, repo });
+    setCfg({ token, repo });
+    await doSync();
+    toast(info.private ? '同步已开好' : '同步已开好，但数据仓库是公开的，请改成私有', 3500);
+  } catch (e) {
+    toast('没开成：' + (e.message || e), 4000);
+  }
+  render();
+  return true;
+}
+
 A.export = async () => {
   const files = [];
   for (const f of await DB.allFiles()) {
@@ -1548,7 +1792,7 @@ async function start() {
     if (!el) return;
     Promise.resolve(CHANGE[el.dataset.change](el)).catch(err => { console.error(err); toast('出错了：' + (err.message || err)); });
   });
-  addEventListener('hashchange', () => { closeModal(); render(); scrollTo(0, 0); });
+  addEventListener('hashchange', () => { if (/^#\/pair\//.test(location.hash)) { handlePair(); return; } closeModal(); render(); scrollTo(0, 0); });
   addEventListener('online', () => { setSync('idle'); doSync(); });
   addEventListener('offline', () => setSync('offline', '网络不通，联网后会自动同步'));
   document.addEventListener('visibilitychange', () => {
@@ -1556,9 +1800,12 @@ async function start() {
   });
   $('#fab').addEventListener('click', () => A.note({}));
   setInterval(tick, 1000);
-  render();
-  if (sessionStorage.getItem('pp.updated')) { sessionStorage.removeItem('pp.updated'); toast('已更新到新版本'); }
-  setTimeout(() => doSync(), 300);
+  if (await handlePair()) { /* 扫码进来的：handlePair 已经渲染并同步 */ }
+  else {
+    render();
+    if (sessionStorage.getItem('pp.updated')) { sessionStorage.removeItem('pp.updated'); toast('已更新到新版本'); }
+    setTimeout(() => doSync(), 300);
+  }
 
   if ('serviceWorker' in navigator && !/[?&]nosw/.test(location.search)) {
     const had = !!navigator.serviceWorker.controller;

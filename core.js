@@ -157,7 +157,8 @@ export function computeMetrics(recs, wk, now = Date.now()) {
   const days = new Set();
   const since = addDays(new Date(dayStr(now) + 'T00:00:00').getTime(), -13);
   for (const r of live) {
-    const t = r.type === 'note' ? r.at : r.type === 'focus' ? r.start : 0;
+    // 电脑自动记的不算用户用过；在 App 里处理过一条建议算
+    const t = r.type === 'note' ? r.at : r.type === 'focus' ? r.start : r.type === 'auto' && r.kind === 'suggest' ? r.dismissedAt || 0 : 0;
     if (t && t >= since && t <= now) days.add(dayStr(t));
   }
 
@@ -230,7 +231,7 @@ export function jigsaw(n) {
 
 // ---------- 拼图画面：每幅拼图按编号生成一张固定的风景，拼上一块露出一块 ----------
 
-function rng(seed) {
+export function rng(seed) {
   let h = 2166136261;
   for (const ch of String(seed)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
   return () => {
