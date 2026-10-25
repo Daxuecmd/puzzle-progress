@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { run } from '../tools/collect.mjs';
+import { run, dayOf, timeOf, dayWindow, loadConfig } from '../tools/collect.mjs';
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -19,8 +19,12 @@ const git = (cwd, ...args) => execFileSync('git', args, {
 }).trim();
 const write = (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text, 'utf8'); };
 const pad = n => String(n).padStart(2, '0');
-const nowDate = new Date();
-const day = `${nowDate.getFullYear()}-${pad(nowDate.getMonth() + 1)}-${pad(nowDate.getDate())}`;
+// 对话存档 INDEX 里的时间由 archive.mjs 按本机时钟写，这里照样用本机时钟造数据
+const localStamp = (t = Date.now()) => {
+  const d = new Date(t);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+const day = dayOf(Date.now());
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'collect-check-'));
 const tasksArea = path.join(root, 'tasks-area');
@@ -36,7 +40,7 @@ const codeRepo = path.join(codeRoot, 'demo-project');
 const dataFile = path.join(dataRepo, 'data.json');
 
 function config() {
-  return { tasksArea, codeRoot, archiveRoot, dataRepo, stateFile };
+  return { tasksArea, codeRoot, archiveRoot, dataRepo, stateFile, timeZone: 'Asia/Shanghai' };
 }
 const readData = () => JSON.parse(fs.readFileSync(dataFile, 'utf8'));
 const writeTask = status => write(path.join(taskDir, 'TASK.md'),
@@ -57,10 +61,10 @@ function setup() {
   git(codeRepo, 'add', 'README.md');
   git(codeRepo, 'commit', '-m', 'T901: 示例初始提交');
 
-  // 假存档：目录里 1 段标题能对上项目的对话
+  // 假存档：目录里 1 段标题能对上项目的对话（时间按本机时钟写，和真存档一样）
   write(path.join(archiveRoot, 'conversations', 'INDEX.md'),
     `# 对话目录\n\n| 最后时间 | 标题 | 来自 | 用户发言 | 文件 |\n|---|---|---|---|---|\n` +
-    `| ${day} 09:00 | 示例项目进度 | claude | 2 | conversations/claude/demo__1.md |\n`);
+    `| ${localStamp()} | 示例项目进度 | claude | 2 | conversations/claude/demo__1.md |\n`);
   write(path.join(archiveRoot, 'conversations', 'claude', 'demo__1.md'), '# 示例项目进度\n\n假对话正文。\n');
 
   // 假数据仓库：本地仓库 + 裸仓库当远程，先放非 auto 记录
@@ -106,6 +110,26 @@ const quiet = { configPath: configFile, log: () => {}, warn: () => {} };
 setup();
 
 console.log('自动入账');
+
+t('按北京时间分天，不受本机时区影响', () => {
+  // 本机是太平洋时间：17:30 已是北京第二天 08:30；08:00 仍是北京同一天 23:00
+  assert.equal(dayOf(Date.parse('2026-10-25T17:30:00-07:00')), '2026-10-26');
+  assert.equal(dayOf(Date.parse('2026-10-25T08:00:00-07:00')), '2026-10-25');
+  assert.equal(timeOf(Date.parse('2026-10-25T17:30:00-07:00')), '2026-10-26 08:30');
+  assert.equal(timeOf(Date.parse('2026-10-25T08:00:00-07:00')), '2026-10-25 23:00');
+  // 北京时间 10-26 这一天，对应的 UTC 起止应是 10-25 16:00 到 10-26 15:59:59
+  const { start, end } = dayWindow('2026-10-26', 'Asia/Shanghai');
+  assert.equal(new Date(start).toISOString(), '2026-10-25T16:00:00.000Z');
+  assert.equal(new Date(end).toISOString(), '2026-10-26T15:59:59.000Z');
+});
+
+t('配置里没写 timeZone 时默认按北京时间', () => {
+  const noTz = path.join(root, 'collect.config.no-timezone.json');
+  const { timeZone, ...rest } = config();
+  write(noTz, JSON.stringify(rest, null, 1));
+  assert.equal(loadConfig(noTz).timeZone, 'Asia/Shanghai');
+  assert.equal(loadConfig(configFile).timeZone, 'Asia/Shanghai');
+});
 
 let firstDay = null;
 let firstHead = '';

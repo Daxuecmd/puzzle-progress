@@ -5,7 +5,7 @@
 // 用法：
 //   node tools/collect.mjs --config <配置文件> [--dry-run] [--day YYYY-MM-DD]
 //   --dry-run  只打印将写入的记录，不写快照、不提交、不推送
-//   --day      汇总哪一天，默认本机今天
+//   --day      汇总哪一天，默认按配置时区的今天（配置里没写 timeZone 时按 Asia/Shanghai）
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -15,16 +15,74 @@ import { mergeRecords, sameRecords, stableStringify } from '../core.js';
 const STATUS_DONE = ['待验收', '完成'];
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TASK_RE = /\bT\d{3}\b/g;
+// 用户和手机都按北京时间分天，这台电脑的系统时钟可能是别的时区
+export const DEFAULT_TIME_ZONE = 'Asia/Shanghai';
 
-const pad = n => String(n).padStart(2, '0');
-export const dayOf = (t = Date.now()) => {
-  const d = new Date(t);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const formatters = new Map();
+function partsOf(t, timeZone) {
+  let fmt = formatters.get(timeZone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    });
+    formatters.set(timeZone, fmt);
+  }
+  const out = {};
+  for (const p of fmt.formatToParts(new Date(t))) {
+    if (p.type !== 'literal') out[p.type] = p.value;
+  }
+  return out;
+}
+
+export function assertTimeZone(timeZone) {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone });
+  } catch {
+    throw new Error(`时区写法不认识：${timeZone}（要像 Asia/Shanghai 这样）`);
+  }
+  return timeZone;
+}
+
+// 某个时刻在指定时区是哪一天 / 几点几分
+export const dayOf = (t = Date.now(), timeZone = DEFAULT_TIME_ZONE) => {
+  const p = partsOf(t, timeZone);
+  return `${p.year}-${p.month}-${p.day}`;
 };
-const timeOf = (t = Date.now()) => {
-  const d = new Date(t);
-  return `${dayOf(t)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+export const timeOf = (t = Date.now(), timeZone = DEFAULT_TIME_ZONE) => {
+  const p = partsOf(t, timeZone);
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
 };
+
+// 指定时区里某一天 0 点对应的时刻（毫秒）；给 git log 算当天的起止用
+export function startOfDay(day, timeZone = DEFAULT_TIME_ZONE) {
+  const [y, m, d] = day.split('-').map(Number);
+  const want = Date.UTC(y, m - 1, d);
+  let ts = want;
+  for (let i = 0; i < 4; i++) {
+    const p = partsOf(ts, timeZone);
+    const got = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute), Number(p.second));
+    const delta = got - want;
+    if (!delta) break;
+    ts -= delta;
+  }
+  return ts;
+}
+
+const isoSecond = ms => new Date(ms).toISOString().slice(0, 19) + 'Z';
+
+// 当天（按指定时区）的起止时刻：start 含，end 是本时区 23:59:59
+export function dayWindow(day, timeZone = DEFAULT_TIME_ZONE) {
+  const [y, m, d] = day.split('-').map(Number);
+  const next = new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+  return { start: startOfDay(day, timeZone), end: startOfDay(next, timeZone) - 1000 };
+}
 
 // ---------- 配置、元数据 ----------
 
@@ -72,6 +130,10 @@ export function loadConfig(configPath) {
     cfg[key] = path.resolve(base, v.trim());
   }
   if (!fs.existsSync(path.join(cfg.tasksArea, 'projects'))) throw new Error(`工单区里没有 projects 目录：${cfg.tasksArea}`);
+  // timeZone 可选；缺省按北京时间，避免跟着本机系统时区跑偏
+  cfg.timeZone = assertTimeZone(
+    typeof raw.timeZone === 'string' && raw.timeZone.trim() ? raw.timeZone.trim() : DEFAULT_TIME_ZONE
+  );
   return cfg;
 }
 
@@ -190,11 +252,12 @@ export function git(repo, args, { allowFail = false } = {}) {
 
 const isRepo = dir => fs.existsSync(path.join(dir, '.git'));
 
-function commitsInRepo(repo, day) {
+function commitsInRepo(repo, day, timeZone) {
+  const { start, end } = dayWindow(day, timeZone);
   const out = git(repo, [
     'log',
-    `--since=${day}T00:00:00`,
-    `--until=${day}T23:59:59`,
+    `--since=${isoSecond(start)}`,
+    `--until=${isoSecond(end)}`,
     '--pretty=format:%H%x1f%ct%x1f%s%x1e',
   ], { allowFail: true });
   if (!out) return [];
@@ -210,10 +273,11 @@ function commitsInRepo(repo, day) {
 
 function taskAreaCommits(cfg, day) {
   if (!isRepo(cfg.tasksArea)) return [];
+  const { start, end } = dayWindow(day, cfg.timeZone);
   const out = git(cfg.tasksArea, [
     'log',
-    `--since=${day}T00:00:00`,
-    `--until=${day}T23:59:59`,
+    `--since=${isoSecond(start)}`,
+    `--until=${isoSecond(end)}`,
     '--pretty=format:%x1e%H%x1f%ct%x1f%s',
     '--name-only',
   ], { allowFail: true });
@@ -239,7 +303,7 @@ export function collectCommits(cfg, projects, day) {
   for (const p of projects.values()) {
     const repo = path.join(cfg.codeRoot, p.code);
     if (!isRepo(repo)) continue;
-    for (const c of commitsInRepo(repo, day)) add(p.code, c);
+    for (const c of commitsInRepo(repo, day, cfg.timeZone)) add(p.code, c);
   }
   for (const c of taskAreaCommits(cfg, day)) {
     const touched = new Set();
@@ -264,6 +328,15 @@ const countOf = (hay, needle) => {
   return m ? m.length : 0;
 };
 
+// 存档 INDEX 的「最后时间」是 archive.mjs 按本机时钟写的：先把它读成一个时刻，
+// 再换算成配置时区的日期，不能直接拿它前面的日期字符串跟目标日期比。
+const wallClockMs = s => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(s).trim());
+  if (!m) return null;
+  const t = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5])).getTime();
+  return Number.isNaN(t) ? null : t;
+};
+
 // 读存档的对话目录；按标题或内容里的项目代号 / 中文简称归到项目，归不上的算 other
 export function collectChats(cfg, day, projects, warn = () => {}) {
   const index = path.join(cfg.archiveRoot, 'conversations', 'INDEX.md');
@@ -276,8 +349,9 @@ export function collectChats(cfg, day, projects, warn = () => {}) {
   for (const line of fs.readFileSync(index, 'utf8').split(/\r?\n/)) {
     if (!line.trim().startsWith('|')) continue;
     const cells = line.split('|').slice(1, -1).map(s => s.trim());
-    if (cells.length < 5 || !DAY_RE.test(cells[0].slice(0, 10))) continue;
-    if (cells[0].slice(0, 10) !== day) continue;
+    if (cells.length < 5) continue;
+    const at = wallClockMs(cells[0]);
+    if (at === null || dayOf(at, cfg.timeZone) !== day) continue;
     rows.push({ title: cells[1] || '（未命名）', file: cells[4] });
   }
   const list = projects.size ? [...projects.values()] : [];
@@ -448,9 +522,11 @@ function push(repo, warn) {
 
 // ---------- 主流程 ----------
 
-export function run({ configPath, day = dayOf(), dryRun = false, log = console.log, warn = console.error } = {}) {
+export function run({ configPath, day: dayArg = '', dryRun = false, log = console.log, warn = console.error } = {}) {
   const now = Date.now();
   const cfg = loadConfig(configPath);
+  const timeZone = cfg.timeZone;
+  const day = dayArg || dayOf(now, timeZone);
   const projects = loadProjects(cfg, warn);
   const tasks = loadTasks(projects);
   const state = loadState(cfg.stateFile);
@@ -465,7 +541,7 @@ export function run({ configPath, day = dayOf(), dryRun = false, log = console.l
     const suggestions = buildSuggestions({ records: data.records, tasks, now });
     const { writes, skipped } = planWrites(data.records, [...dayRecords, ...suggestions], now);
     for (const s of skipped) warn(`跳过 ${s.id}：${s.why}`);
-    log(`[试运行] ${day}：将写入 ${writes.length} 条记录（不写快照、不提交、不推送）`);
+    log(`[试运行] ${day}（时区 ${timeZone}）：将写入 ${writes.length} 条记录（不写快照、不提交、不推送）`);
     log(JSON.stringify(writes, null, 2));
     return { writes, merged: data.records, changed: writes.length > 0, committed: false, pushed: false, firstRun: state.first, skipped };
   }
@@ -482,7 +558,7 @@ export function run({ configPath, day = dayOf(), dryRun = false, log = console.l
   const merged = mergeRecords(writes, data.records);
   const changed = !sameRecords(merged, data.records);
   // --day 指到别的日期时只补那一天，不动今天的快照，免得吞掉今天的状态变化
-  const today = day === dayOf(now);
+  const today = day === dayOf(now, timeZone);
   const save = () => {
     if (today) saveState(cfg.stateFile, tasks, now);
     else warn(`${day} 不是今天，状态快照不更新`);
@@ -502,7 +578,7 @@ export function run({ configPath, day = dayOf(), dryRun = false, log = console.l
 
   writeData(cfg.dataRepo, data, merged);
   git(cfg.dataRepo, ['add', '--', 'data.json']);
-  git(cfg.dataRepo, ['commit', '-m', `自动入账 ${timeOf(now)}`]);
+  git(cfg.dataRepo, ['commit', '-m', `自动入账 ${timeOf(now, timeZone)}`]);
   const pushed = push(cfg.dataRepo, warn);
   save();
   log(`${day} 写入 ${writes.length} 条记录，已提交${pushed ? '并推送' : '，推送待重试'}`);
