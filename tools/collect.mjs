@@ -386,14 +386,40 @@ const brief = s => {
 };
 const idsIn = s => String(s).match(TASK_RE) || [];
 
-export function buildDayRecords({ day, projects, changes, commits, chats, now = Date.now() }) {
+// 「提交」「对话」两段每次运行都按当天重算，其余行都是状态变化行（要跨运行累积）
+const isSummaryLine = line => /^提交 \d+ 次：/.test(line) || /^和 Claude 聊了 \d+ 段：/.test(line);
+export function statusLinesOf(record) {
+  if (!record || !Array.isArray(record.lines)) return [];
+  return record.lines.filter(l => typeof l === 'string' && !isSummaryLine(l));
+}
+
+// existing：数据仓库里已有的记录。同一天同一条 day 记录再次运行时，先把已有的状态变化行
+// 原样带上，再接本次新的变化行（内容完全相同的去重），最后接提交 / 对话两段，免得
+// 一次运行把当天早先的变化行抹掉。
+export function buildDayRecords({ day, projects, changes, commits, chats, existing = [], now = Date.now() }) {
   const codes = new Set([...commits.keys(), ...chats.keys(), ...changes.map(c => c.project)]);
+  const oldById = new Map();
+  for (const r of existing) {
+    if (!r || r.type !== 'auto' || r.kind !== 'day' || r.day !== day) continue;
+    oldById.set(r.id, r);
+    // 已有当天记录的项目，即使这次没有新内容也要参与比对，内容没变时不会重写
+    if (typeof r.project === 'string' && r.project) codes.add(r.project);
+  }
   const records = [];
   for (const code of [...codes].sort()) {
+    const id = `auto-${day}-${code}`;
+    const old = oldById.get(id);
     const lines = [];
-    const refs = new Set();
+    const seen = new Set();
+    const pushLine = line => {
+      if (seen.has(line)) return;
+      seen.add(line);
+      lines.push(line);
+    };
+    const refs = new Set(Array.isArray(old?.refs) ? old.refs : []);
+    for (const line of statusLinesOf(old)) pushLine(line);
     for (const c of changes.filter(x => x.project === code)) {
-      lines.push(`${c.id} ${c.title}：${c.from} → ${c.to}`);
+      pushLine(`${c.id} ${c.title}：${c.from} → ${c.to}`);
       refs.add(c.id);
     }
     const cs = commits.get(code) || [];
@@ -415,7 +441,7 @@ export function buildDayRecords({ day, projects, changes, commits, chats, now = 
       kind: 'day',
       day,
       project: code,
-      projectName: code === 'other' ? '其他' : (p ? p.name : code),
+      projectName: p ? p.name : (old?.projectName || (code === 'other' ? '其他' : code)),
       lines,
       refs: [...refs].sort(),
       createdAt: now,
@@ -533,11 +559,14 @@ export function run({ configPath, day: dayArg = '', dryRun = false, log = consol
   const changes = statusChanges(tasks, state);
   const commits = collectCommits(cfg, projects, day);
   const chats = collectChats(cfg, day, projects, warn);
-  const dayRecords = buildDayRecords({ day, projects, changes, commits, chats, now });
+  // 已有的当天记录要带上，状态变化行才能跨运行累积
+  const dayRecordsFor = data =>
+    buildDayRecords({ day, projects, changes, commits, chats, existing: data.records, now });
 
   if (dryRun) {
     if (state.first) log('[试运行] 首次运行：只建快照，不产生状态变化行');
     const data = readData(cfg.dataRepo);
+    const dayRecords = dayRecordsFor(data);
     const suggestions = buildSuggestions({ records: data.records, tasks, now });
     const { writes, skipped } = planWrites(data.records, [...dayRecords, ...suggestions], now);
     for (const s of skipped) warn(`跳过 ${s.id}：${s.why}`);
@@ -552,6 +581,7 @@ export function run({ configPath, day: dayArg = '', dryRun = false, log = consol
     return { writes: [], merged: [], changed: false, committed: false, pushed: false, firstRun: state.first, skipped: [] };
   }
   const data = readData(cfg.dataRepo);
+  const dayRecords = dayRecordsFor(data);
   const suggestions = buildSuggestions({ records: data.records, tasks, now });
   const { writes, skipped } = planWrites(data.records, [...dayRecords, ...suggestions], now);
   for (const s of skipped) warn(`跳过 ${s.id}：${s.why}`);

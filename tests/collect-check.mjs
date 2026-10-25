@@ -203,6 +203,20 @@ t('状态变化成一行，同一天重跑覆盖同一 id，不新增', () => {
   assertNonAuto(data);
 });
 
+t('状态变化后再跑一次（无新变化），旧状态行仍在，且不产生新提交', () => {
+  const head = git(dataRepo, 'rev-parse', 'HEAD');
+  const res = run(quiet);
+  assert.equal(res.changed, false, '没有新变化却又写入了');
+  assert.equal(git(dataRepo, 'rev-parse', 'HEAD'), head, 'HEAD 变了，说明又提交了');
+  const d = readData().records.find(r => r.id === firstDay.id);
+  const statusLines = d.lines.filter(l => l.startsWith('T901 '));
+  assert.deepEqual(statusLines, ['T901 示例任务：执行中 → 待验收'], '旧的状态变化行被抹掉或重复了');
+  assert.deepEqual(d.lines.slice(-2).map(l => l.replace(/\d+/g, 'N')), [
+    '提交 N 次：示例第二次提交；示例初始提交',
+    '和 Claude 聊了 N 段：示例项目进度',
+  ], '状态变化行没有排在最前，或两段汇总没接在后面');
+});
+
 t('dismissed: true 的建议不被改', () => {
   const data = readData();
   const sug = data.records.find(r => r.id === 'auto-suggest-demo-piece-T901');
@@ -234,6 +248,38 @@ t('dismissed: true 的建议不被改', () => {
   const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
   assert.equal(state.statuses['demo-project/T901'], '完成');
   assert.ok((git(remote, 'log', '--oneline', '--all').match(/自动入账/g) || []).length >= 3);
+});
+
+t('同一天先后两次不同变化，两行都在、顺序正确', () => {
+  // 新项目、新工单：第一次出现只登记快照，不算变化
+  const p2 = path.join(tasksArea, 'projects', 'demo-two');
+  write(path.join(p2, 'PROJECT.md'), '---\nproject: demo-two\nshort_name: 示例二号\n---\n\n假项目。\n');
+  const t2dir = path.join(p2, 'tasks', 'T902-second');
+  const writeT2 = s => write(path.join(t2dir, 'TASK.md'), `---\nid: T902\ntitle: 二号任务\nstatus: ${s}\n---\n`);
+  writeT2('执行中');
+  assert.equal(run(quiet).changed, false, '新工单第一次出现不该写变化行');
+
+  writeT2('待验收');
+  assert.equal(run(quiet).changed, true, '第一次变化没有写入');
+  writeT2('完成');
+  assert.equal(run(quiet).changed, true, '第二次变化没有写入');
+
+  const data = readData();
+  const days = data.records.filter(r => r.type === 'auto' && r.kind === 'day' && r.project === 'demo-two');
+  assert.equal(days.length, 1, '同一天不该新增第二条汇总');
+  assert.deepEqual(days[0].lines, [
+    'T902 二号任务：执行中 → 待验收',
+    'T902 二号任务：待验收 → 完成',
+  ], '两行状态变化没有按先后顺序保留');
+  assert.deepEqual(days[0].refs, ['T902']);
+  assertNonAuto(data);
+
+  // 只有状态变化行的记录，没有新内容再跑一次也要原样保留
+  const head = git(dataRepo, 'rev-parse', 'HEAD');
+  assert.equal(run(quiet).changed, false, '没有新变化却又写入了');
+  assert.equal(git(dataRepo, 'rev-parse', 'HEAD'), head, 'HEAD 变了，说明又提交了');
+  const again = readData().records.find(r => r.id === days[0].id);
+  assert.deepEqual(again.lines, days[0].lines, '再跑一次把状态变化行抹掉了');
 });
 
 console.log(`\n${pass} 项通过，${fail} 项失败`);
