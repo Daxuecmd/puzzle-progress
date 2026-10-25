@@ -481,13 +481,20 @@ export function run({ configPath, day = dayOf(), dryRun = false, log = console.l
   for (const s of skipped) warn(`跳过 ${s.id}：${s.why}`);
   const merged = mergeRecords(writes, data.records);
   const changed = !sameRecords(merged, data.records);
+  // --day 指到别的日期时只补那一天，不动今天的快照，免得吞掉今天的状态变化
+  const today = day === dayOf(now);
+  const save = () => {
+    if (today) saveState(cfg.stateFile, tasks, now);
+    else warn(`${day} 不是今天，状态快照不更新`);
+  };
 
   if (!changed) {
     if (state.first) log(`首次运行：只建快照，不产生状态变化行（${day}）`);
     log(`${day} 没有变化，不提交`);
-    saveState(cfg.stateFile, tasks, now);
-    if (aheadCount(cfg.dataRepo) > 0) {
-      log(`有 ${aheadCount(cfg.dataRepo)} 条上次没推上去的提交，重试推送`);
+    save();
+    const pending = aheadCount(cfg.dataRepo);
+    if (pending > 0) {
+      log(`有 ${pending} 条上次没推上去的提交，重试推送`);
       push(cfg.dataRepo, warn);
     }
     return { writes, merged, changed: false, committed: false, pushed: false, firstRun: state.first, skipped };
@@ -497,7 +504,7 @@ export function run({ configPath, day = dayOf(), dryRun = false, log = console.l
   git(cfg.dataRepo, ['add', '--', 'data.json']);
   git(cfg.dataRepo, ['commit', '-m', `自动入账 ${timeOf(now)}`]);
   const pushed = push(cfg.dataRepo, warn);
-  saveState(cfg.stateFile, tasks, now);
+  save();
   log(`${day} 写入 ${writes.length} 条记录，已提交${pushed ? '并推送' : '，推送待重试'}`);
   log(writes.map(r => r.id).join('\n'));
   return { writes, merged, changed: true, committed: true, pushed, firstRun: state.first, skipped };
