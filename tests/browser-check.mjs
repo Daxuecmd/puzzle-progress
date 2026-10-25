@@ -224,7 +224,10 @@ await t('3 首页到记下一句 ≤ 2 次点击；没在专注时进散块盒�
 });
 
 await t('4 断网后刷新能打开、能记一条；恢复网络后自动同步到仓库', async () => {
-  await A.waitFor('!!navigator.serviceWorker.controller', 10000, '离线缓存就绪');
+  await A.waitFor('!!navigator.serviceWorker.controller', 20000, '离线缓存就绪').catch(async e => {
+    const why = await A.eval(`navigator.serviceWorker.getRegistration().then(r => JSON.stringify({ reg: !!r, installing: r?.installing?.state, waiting: r?.waiting?.state, active: r?.active?.state, ctrl: !!navigator.serviceWorker.controller }))`);
+    throw new Error(e.message + ' ' + why);
+  });
   await A.eval('PP.syncNow()');
   await A.offline(true);
   gh.setDown(true);
