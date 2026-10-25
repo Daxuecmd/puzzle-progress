@@ -428,6 +428,96 @@ await t('15 扫码进来：令牌从地址栏抹掉、保存、同步拉到数�
   await A.eval('document.querySelector(".modal-wrap").remove()');
 });
 
+// ---------- v1.3：动效规格自测（docs/motion-spec.md） ----------
+
+// 页面里某个范围内所有动画播完要多久（毫秒）：取各动画 endTime 的最大值，循环动画不算
+const ANIM_END = scope => `Math.max(0, ...document.getAnimations()
+  .filter(a => { const el = a.effect?.target; return el && el.closest && el.closest(${JSON.stringify(scope)}) && a.effect.getTiming().iterations !== Infinity; })
+  .map(a => a.effect.getComputedTiming().endTime))`;
+
+await t('16 每天出现的动画 ≤ 0.8 秒：拼上、弹层、挑块回首页', async () => {
+  const pid = await A.eval(`PP.live("piece").find(p => p.puzzleId === "${mainId}" && p.status !== "done").id`);
+  await A.eval(`(async () => { const p = PP.get("${pid}"); p.evidence = [{ id: 'ev-t16', kind: 'link', url: 'https://example.com/t16', at: Date.now() }]; await PP.save(p); location.hash = '#/piece/${pid}'; })()`);
+  await A.waitFor('!!document.querySelector("#place-btn") && !document.querySelector("#place-btn").disabled');
+  await A.eval('document.querySelector("#place-btn").click()');
+  await A.waitFor('!!document.querySelector(".placed-overlay")', 3000, '落位遮罩');
+  const place = await A.eval(ANIM_END('.placed-overlay'));
+  assert.ok(place > 300 && place <= 800, `拼上动画 ${place}ms，应在 0.8 秒内`);
+  await A.waitFor('location.hash.startsWith("#/card/")', 3000, '1.1 秒左右进经验卡');
+  await A.hash('#/');
+  await A.click('#fab');
+  const sheet = await A.eval(ANIM_END('.modal-wrap'));
+  assert.ok(sheet <= 800, `记一句弹层 ${sheet}ms`);
+  await A.eval('document.querySelector(".modal-wrap").remove()');
+  await A.click('[data-act="pick-today"]');
+  // 确保至少挑上一块，回首页才有行可以滑入（第一次跑时这里是空的，量出 0ms 等于没测）
+  await A.eval(`PP.state.ui.pick.size || PP.state.ui.pick.add(PP.live("piece").find(p => p.status !== "done" && PP.get(p.puzzleId)?.lane === "main").id), 1`);
+  await A.click('[data-act="pick-save"]');
+  assert.ok(await A.eval('document.querySelectorAll("#home-today .today-row.enter").length') > 0, '应有今天的块在滑入');
+  const rows = await A.eval(ANIM_END('#home-today'));
+  assert.ok(rows <= 800, `今天的块滑入 ${rows}ms`);
+  console.log(`    实测：拼上 ${Math.round(place)}ms，记一句弹层 ${Math.round(sheet)}ms，挑块回首页 ${Math.round(rows)}ms`);
+});
+
+await t('17 拼完整幅才放大庆祝；日常拼上不放大', async () => {
+  await A.eval(`(async () => {
+    const now = Date.now();
+    await PP.save({ id: 'pz-cel', type: 'puzzle', lane: 'paused', name: '庆祝用', deadline: PP.C.dayStr(now + 9e8), createdAt: now },
+      ...[1, 2, 3, 4].map(i => ({ id: 'cel' + i, type: 'piece', puzzleId: 'pz-cel', name: '块' + i, order: i, status: i < 4 ? 'done' : 'empty', doneAt: i < 4 ? now : null,
+        evidence: [{ id: 'e' + i, kind: 'link', url: 'https://example.com/' + i, at: now }] })));
+    location.hash = '#/piece/cel4';
+  })()`);
+  await A.waitFor('!!document.querySelector("#place-btn")');
+  await A.eval('document.querySelector("#place-btn").click()');
+  await A.waitFor('!!document.querySelector(".placed-overlay")', 3000, '落位遮罩');
+  assert.ok(await A.eval('document.querySelector(".placed-overlay").classList.contains("celebrate")'), '拼完整幅应有庆祝');
+  assert.match(await A.text('.placed-overlay'), /整幅拼完了/);
+  await A.eval('document.querySelector(".placed-overlay").click()');
+});
+
+await t('18 30 秒没碰屏幕：循环动画全部停下', async () => {
+  await A.hash('#/puzzle/' + mainId);
+  await sleep(700);
+  const running = () => A.eval(`document.getAnimations().filter(a => a.effect.getTiming().iterations === Infinity && a.playState === 'running').length`);
+  assert.ok(await running() > 0, '应该有循环动画在跑');
+  assert.equal(await A.eval('PP.IDLE_MS'), 30000);
+  await A.eval('PP.idleNow()');
+  assert.equal(await running(), 0, '停下后不应还有循环动画在跑');
+});
+
+await t('19 减少动态效果：没有在跑的动画，已拼的块不被遮住，拼上照样走完', async () => {
+  const R = await newPage(cdp);
+  await R.s('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  await R.goto(ORIGIN);
+  await R.eval(`(async () => {
+    const now = Date.now();
+    await PP.save({ id: 'pz-rm', type: 'puzzle', lane: 'main', name: '安静模式', deadline: PP.C.dayStr(now + 9e8), acceptor: '某人', createdAt: now },
+      ...[1, 2, 3].map(i => ({ id: 'rm' + i, type: 'piece', puzzleId: 'pz-rm', name: '块' + i, order: i, status: i < 3 ? 'done' : 'empty', doneAt: i < 3 ? now : null,
+        evidence: [{ id: 'e' + i, kind: 'link', url: 'https://example.com/' + i, at: now }] })));
+    location.hash = '#/puzzle/pz-rm';
+  })()`);
+  await sleep(300);
+  assert.equal(await R.eval('document.querySelectorAll(".m-cover").length'), 0, '不应生成遮盖层');
+  assert.equal(await R.eval(`document.getAnimations().filter(a => a.playState === 'running').length`), 0, '不应有在跑的动画');
+  assert.match(await R.text('#view'), /已拼 2 \/ 3/);
+  await R.hash('#/piece/rm3');
+  await R.eval('document.querySelector("#place-btn").click()');
+  await R.waitFor('location.hash.startsWith("#/card/")', 3000, '减少动态效果下拼上也能进经验卡');
+  await R.s('Target.closeTarget', { targetId: (await R.s('Target.getTargetInfo')).targetInfo.targetId }).catch(() => { });
+});
+
+await t('20 进度那句话：落后时说事实、不用红色；跟上时说跟得上', async () => {
+  const now = Date.now();
+  const M = await A.eval(`import('./motion.js').then(M => [
+    M.paceText({ createdAt: ${now} - 10 * 864e5, deadline: PP.C.dayStr(${now} + 10 * 864e5) }, 1, 10, ${now}),
+    M.paceText({ createdAt: ${now} - 10 * 864e5, deadline: PP.C.dayStr(${now} + 10 * 864e5) }, 6, 10, ${now})])`);
+  assert.match(M[0], /按时间算该拼到 \d+ 块，现在 1 块/);
+  assert.equal(M[1], '进度跟得上');
+  assert.ok(!/落后|太慢|失败/.test(M.join('')), '不许用责备的词');
+  const color = await A.eval(`(() => { const d = document.createElement('div'); d.className = 'pace'; document.body.appendChild(d); const c = getComputedStyle(d).color; d.remove(); return c; })()`);
+  assert.equal(color, 'rgb(90, 97, 112)', '进度那句话应是正文灰');
+});
+
 await t('页面没有报错', async () => {
   const all = [...A.logs, ...B.logs].filter(l => !/Failed to fetch|ERR_INTERNET_DISCONNECTED|ERR_CONNECTION|net::/.test(l));
   assert.deepEqual(all, []);

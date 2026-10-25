@@ -3,7 +3,7 @@ import * as DB from './db.js';
 import * as S from './sync.js';
 import * as M from './motion.js';
 
-export const VERSION = '1.2.0';
+export const VERSION = '1.3.0';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -134,7 +134,16 @@ function openModal(html) {
   return w;
 }
 const setModal = html => { const m = $('.modal'); if (m) m.innerHTML = html; };
-const closeModal = () => document.querySelectorAll('.modal-wrap').forEach(m => m.remove());
+// 收起时先改名再播 200ms 下滑，免得和新打开的弹层抢选择器
+function closeModal() {
+  const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  document.querySelectorAll('.modal-wrap').forEach(w => {
+    if (calm) return w.remove();
+    w.className = 'modal-wrap-out';
+    w.querySelector('.modal')?.classList.replace('modal', 'modal-out');
+    setTimeout(() => w.remove(), 200);
+  });
+}
 const modalOpen = () => !!$('.modal-wrap');
 const isTyping = () => /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || '');
 
@@ -345,7 +354,7 @@ function sceneState(pz, ps, J, arriving) {
 // 整幅拼图：拼上的块露出这幅拼图自己的画面，空位是灰的；画面按动效模型跟着任务情况动
 // arriving：刚拼上的那块先空着，再从下方飞进自己的位置（落位动画用）
 // reveal：打开拼图页时已拼上的块按模型的顺序依次亮出来
-function jigsawSvg(pz, { mini = false, arriving = null, model = motionModel(), reveal = false } = {}) {
+function jigsawSvg(pz, { mini = false, arriving = null, model = motionModel(), reveal = false, live = false } = {}) {
   const ps = piecesOf(pz.id);
   if (!ps.length) return `<div class="empty">还没有拼块，先在下面加一块。</div>`;
   const J = C.jigsaw(ps.length);
@@ -358,25 +367,38 @@ function jigsawSvg(pz, { mini = false, arriving = null, model = motionModel(), r
   const ai = ps.findIndex(p => p.id === arriving);
   // 亮出来的顺序：晨光从上往下，潮汐从下往上，星图按拼上的先后
   const revealOrder = model === 'tide' ? [...doneIdx].reverse() : model === 'stars' ? [...doneIdx].sort((a, b) => (ps[a].doneAt || 0) - (ps[b].doneAt || 0)) : doneIdx;
-  const covers = reveal && model !== 'still' ? revealOrder.map((i, k) => `<path class="m-cover" style="--k:${k}" d="${J.pieces[i].d}"/>`).join('') : '';
-  const slots = J.pieces.map((g, i) => (sts[i] === 'done' ? '' : `<g class="${sts[i]}"><path class="fill" d="${g.d}"/></g>`)).join('');
-  // 进行中的块描边最后画，免得被邻块的缝盖住
-  const order = J.pieces.map((_, i) => i).sort((a, b) => (sts[a] === 'doing') - (sts[b] === 'doing'));
-  const seams = order.map(i => { const g = J.pieces[i]; return `<g class="${sts[i]} ${mini ? '' : 'tap'}" data-piece="${ps[i].id}" ${mini ? '' : `data-act="go" data-to="#/piece/${ps[i].id}"`}>
-      <path class="seam" d="${g.d}" style="fill:transparent"/>${mini || sts[i] === 'done' ? '' : `<text x="${g.cx}" y="${g.cy}">${i + 1}</text>`}</g>`; }).join('');
-  return `<svg class="jig ${mini ? 'mini' : ''} m-${model} ${st.focus ? 'focusing' : ''} ${ai >= 0 ? 'rising' : ''}" viewBox="-3 -3 ${W + 6} ${H + 6}" role="img" aria-label="${esc(pz.name)}：已拼 ${doneIdx.length} / ${ps.length}">
+  // 减少动态效果时不生成遮盖层，否则动画被关掉后已拼的块会一直被盖住
+  const covers = reveal && model !== 'still' && !matchMedia('(prefers-reduced-motion: reduce)').matches ? revealOrder.map((i, k) => `<path class="m-cover" style="--k:${k}" d="${J.pieces[i].d}"/>`).join('') : '';
+  const slot = i => `<g class="${sts[i]}"><path class="fill" d="${J.pieces[i].d}"/></g>`;
+  const seam = i => { const g = J.pieces[i]; return `<g class="${sts[i]} ${mini ? '' : 'tap'}" data-piece="${ps[i].id}" ${mini ? '' : `data-act="go" data-to="#/piece/${ps[i].id}"`}>
+      <path class="seam" d="${g.d}" style="fill:transparent"/>${mini || sts[i] === 'done' ? '' : `<text x="${g.cx}" y="${g.cy}">${i + 1}</text>`}</g>`; };
+  const idx = J.pieces.map((_, i) => i);
+  const doing = idx.filter(i => sts[i] === 'doing');
+  // 分四层叠放（perf-check 实测：整张一层时，画面一动连不动的影子、拼缝都要每帧重画）：
+  //   底层：影子 + 空位（不动）；画面层：拼上的画面 + 亮出遮盖（会动）；
+  //   拼缝层：其他块的缝和编号、落位飞入（基本不动）；进行中层：正在做的块（呼吸、蚂蚁线），放最上面免得被邻块的缝盖住
+  const cls = `jig ${mini ? 'mini' : ''} ${live ? 'live' : ''} m-${model} ${st.focus ? 'focusing' : ''} ${ai >= 0 ? 'rising' : ''}`;
+  const vb = `viewBox="-3 -3 ${W + 6} ${H + 6}"`;
+  return `<div class="jigw ${mini ? 'mini' : ''}" role="img" aria-label="${esc(pz.name)}：已拼 ${doneIdx.length} / ${ps.length}">
+  <svg class="${cls} l-back" ${vb} aria-hidden="true">
     <defs>${art.defs}<clipPath id="${uid}-c">${doneIdx.map(i => `<path d="${J.pieces[i].d}"/>`).join('')}</clipPath>
       <clipPath id="${uid}-all">${J.pieces.map(g => `<path d="${g.d}"/>`).join('')}</clipPath>
       ${ai >= 0 ? `<clipPath id="${uid}-a"><path d="${J.pieces[ai].d}"/></clipPath>
       <linearGradient id="${uid}-sh" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".7"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>` : ''}</defs>
     <g class="ghost-art" clip-path="url(#${uid}-all)">${art.body}</g>
-    ${slots}
+    ${idx.filter(i => sts[i] === 'empty').map(slot).join('')}
+  </svg>
+  <svg class="${cls} l-art" ${vb} aria-hidden="true">
     ${doneIdx.length ? `<g clip-path="url(#${uid}-c)">${art.body}</g>` : ''}
     ${covers}
-    ${seams}
+  </svg>
+  <svg class="${cls} l-seam" ${vb} aria-hidden="true">
+    ${idx.filter(i => sts[i] !== 'doing').map(seam).join('')}
     ${ai >= 0 ? `<g class="arrive"><g clip-path="url(#${uid}-a)">${art.body}</g><path class="arrive-edge" d="${J.pieces[ai].d}"/></g>
       <g clip-path="url(#${uid}-all)"><rect class="sheen" x="${-W * 0.6}" y="0" width="${W * 0.6}" height="${H}" fill="url(#${uid}-sh)"/></g>` : ''}
-  </svg>`;
+  </svg>
+  ${doing.length ? `<svg class="${cls} l-doing" ${vb} aria-hidden="true">${doing.map(slot).join('')}${doing.map(seam).join('')}</svg>` : ''}
+</div>`;
 }
 
 // 单独一块：拼上了就是那一小块风景
@@ -417,7 +439,7 @@ function focusBar(f) {
     <div class="what ellipsis tap" data-act="go" data-to="#/piece/${f.pieceId}">${esc(p?.name || '')}</div>
     <div class="clock" data-clock="${f.id}">${C.fmtClock(Date.now() - f.start)}</div>
     <button class="btn sm" data-act="focus-end" data-id="${f.id}">结束</button>
-    <div class="bar"><i data-bar="${f.id}" style="width:${pctDone.toFixed(1)}%"></i></div>
+    <div class="bar"><i data-bar="${f.id}" style="transform:scaleX(${(pctDone / 100).toFixed(4)})"></i></div>
   </div>`;
 }
 
@@ -465,9 +487,9 @@ function pageHome() {
     h += `<div class="sheet pad"><p style="margin:0 0 14px;color:var(--ink-2)">开工前挑 1 到 3 块，今天只做这几块。</p>
       <button class="btn" data-act="pick-today">挑今天的块</button></div>`;
   } else {
-    h += `<div class="sheet">${today.map(p => {
+    h += `<div class="sheet">${today.map((p, i) => {
       const focusing = f?.pieceId === p.id;
-      return `<div class="row-item today-row">
+      return `<div class="row-item today-row ${state.ui.todayEnter ? 'enter' : ''}" style="--i:${i}">
         ${pieceArt(p)}
         <div class="grow tap" data-act="go" data-to="#/piece/${p.id}"><div class="name ellipsis">${esc(p.name)}</div>
           <div class="faint">${get(p.puzzleId)?.lane === 'side' ? '副线，' : ''}已专注 ${C.fmtDuration(focusTotal(p.id))}，记了 ${notesOf(p.id).length} 条</div></div>
@@ -482,7 +504,8 @@ function pageHome() {
     <div class="thumb">${jigsawSvg(m, { mini: true })}</div>
     <div class="grow"><div class="count"><b class="num">${pr.done}</b><span> / ${pr.total}</span></div>
       <div class="name">${esc(m.name)}</div>
-      <div class="faint">${esc(daysLeft(m.deadline))}，${esc(m.acceptor)}说了算</div></div>
+      <div class="faint">${esc(daysLeft(m.deadline))}，${esc(m.acceptor)}说了算</div>
+      ${M.paceText(m, pr.done, pr.total) ? `<div class="pace" id="home-pace">${esc(M.paceText(m, pr.done, pr.total))}</div>` : ''}</div>
   </div>`;
 
   const ta = todayAutos();
@@ -557,7 +580,8 @@ function pagePuzzle(id) {
   const wk = C.weekKey();
   let h = top(LANES[pz.lane], { back: '#/puzzles' });
   h += `<div class="puzzle-head" style="margin-top:0"><h1>${esc(pz.name)}</h1>
-    <p class="lede">已拼 <span class="num">${pr.done} / ${pr.total}</span>，${esc(daysLeft(pz.deadline))}</p></div>
+    <p class="lede">已拼 <span class="num">${pr.done} / ${pr.total}</span>，${esc(daysLeft(pz.deadline))}</p>
+    ${M.paceText(pz, pr.done, pr.total) ? `<p class="pace">${esc(M.paceText(pz, pr.done, pr.total))}</p>` : ''}</div>
   <div class="tray" style="margin-top:16px">${jigsawSvg(pz, { reveal: firstLook(pz.id) })}</div>
   <p class="faint" style="text-align:center;margin:10px 0 0">点一块进去</p>`;
 
@@ -968,7 +992,7 @@ function motionPicker() {
   const cur = motionModel();
   const demo = m && piecesOf(m.id).some(p => p.status === 'done');
   const preview = id => {
-    if (m) return jigsawSvg(m, { mini: true, model: id });
+    if (m) return jigsawSvg(m, { mini: true, model: id, live: true });
     const uid = 'mv' + (++svgSeq);
     const art = M.scene(id, 'demo', 300, 300, uid, { p: 0.55, u: 0.2, focus: true, newest: -1, done: [0, 1, 3, 4].map(i => ({ i, at: i, cx: (i % 3) * 100 + 50, cy: Math.floor(i / 3) * 100 + 50 })) });
     return `<svg class="jig m-${id} focusing" viewBox="0 0 300 300" aria-hidden="true"><defs>${art.defs}</defs>${art.body}</svg>`;
@@ -1078,7 +1102,9 @@ A['pick-save'] = async () => {
   }
   if (changed.length) await save(...changed);
   closeModal();
+  state.ui.todayEnter = true; // 回首页时今天的块逐行滑入（规格：每行 250ms，错开 30ms）
   render();
+  state.ui.todayEnter = false;
 };
 
 A['today-on'] = async d => {
@@ -1398,6 +1424,9 @@ A.place = d => placePiece(get(d.id));
 
 async function placePiece(p, extra = []) {
   if (!(p.evidence || []).length) return toast('先附一个证据');
+  // 里程碑才放大庆祝：拼完整幅，或第一次出现收款证据
+  const hadIncome = live('piece').some(x => x.id !== p.id && x.status === 'done' && (x.evidence || []).some(e => e.kind === 'income'));
+  const firstIncome = !hadIncome && (p.evidence || []).some(e => e.kind === 'income');
   const recs = [p, ...extra];
   const f = activeFocus();
   if (f?.pieceId === p.id) { f.end = Math.min(Date.now(), f.start + f.planned); recs.push(f); }
@@ -1413,6 +1442,7 @@ async function placePiece(p, extra = []) {
   const pr = progress(get(p.puzzleId));
   showPlaced(p, {
     sub: '趁热写下这块的经验',
+    milestone: pr.done === pr.total ? 'whole' : firstIncome ? 'income' : null,
     then: () => {
       state.ui.cardStep[card.id] = 1;
       location.hash = `#/card/${card.id}`;
@@ -1421,17 +1451,20 @@ async function placePiece(p, extra = []) {
   });
 }
 
-// 落位：整幅拼图里这块空着，它从下方转着飞进来、卡进位置，光从画面上扫过，数字跳一格
-function showPlaced(p, { sub = '', then = () => {}, model } = {}) {
+// 落位（规格：日常 750ms 内播完，1.1 秒进经验卡）：这块转着飞进空位，卡住一闪，画面跟涨一格，数字跳一格
+// 里程碑（拼完整幅 / 第一笔收款）：再加缝隙消失、光扫过画面，约 1.8 秒
+const LAND_MS = 550;
+function showPlaced(p, { sub = '', then = () => {}, model, milestone = null } = {}) {
   const pz = get(p.puzzleId);
   const pr = progress(pz);
   closeModal();
   const o = document.createElement('div');
-  o.className = 'placed-overlay';
+  o.className = `placed-overlay ${milestone ? 'celebrate' : ''}`;
+  const title = milestone === 'whole' ? `整幅拼完了：${esc(pz.name)}` : milestone === 'income' ? '第一笔收款，拼上了' : `拼上了「${esc(p.name)}」`;
   o.innerHTML = `<div class="placed-stage">
     <div class="tray">${jigsawSvg(pz, { mini: true, arriving: p.id, model })}</div>
     <p class="placed-count"><b class="num" data-count>${pr.done - 1}</b><span> / ${pr.total}</span></p>
-    <p class="placed-sub">拼上了「${esc(p.name)}」<span>${esc(sub)}</span></p>
+    <p class="placed-sub">${title}<span>${esc(sub)}</span></p>
   </div>`;
   document.body.appendChild(o);
   const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -1446,9 +1479,10 @@ function showPlaced(p, { sub = '', then = () => {}, model } = {}) {
   setTimeout(() => {
     const n = o.querySelector('[data-count]');
     if (n) { n.textContent = pr.done; n.classList.add('bump'); }
-    if (!calm && navigator.userActivation?.hasBeenActive) navigator.vibrate?.(12);
-  }, calm ? 0 : 820);
-  setTimeout(go, calm ? 900 : 2400);
+    // 振动和卡进空位同一帧；只有拼上和里程碑振，频繁的操作不振（安卓振动原则）
+    if (!calm && navigator.userActivation?.hasBeenActive) navigator.vibrate?.(milestone ? [12, 80, 12, 80, 30] : 12);
+  }, calm ? 0 : LAND_MS);
+  setTimeout(go, calm ? 900 : milestone ? 2600 : 1100);
 }
 
 // ---- 电脑自动入账的建议 ----
@@ -1771,14 +1805,25 @@ function tick() {
   });
   document.querySelectorAll('[data-bar]').forEach(el => {
     const ff = get(el.dataset.bar);
-    if (ff) el.style.width = Math.min(100, ((Date.now() - ff.start) / ff.planned) * 100).toFixed(1) + '%';
+    if (ff) el.style.transform = `scaleX(${Math.min(1, (Date.now() - ff.start) / ff.planned).toFixed(4)})`;
   });
   if (recorder) document.querySelectorAll('[data-rec-clock]').forEach(el => { el.textContent = C.fmtClock(Date.now() - recorder.start); });
+}
+
+// 30 秒没碰屏幕，循环动画全部停下（省电、不变成背景噪音）；一碰再动
+const IDLE_MS = 30000;
+let idleTimer = null;
+function wake() {
+  document.documentElement.classList.remove('idle');
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => document.documentElement.classList.add('idle'), IDLE_MS);
 }
 
 async function start() {
   state.recs = await DB.allRecords();
   index();
+  for (const ev of ['pointerdown', 'keydown', 'wheel', 'touchmove']) addEventListener(ev, wake, { passive: true });
+  wake();
   document.addEventListener('click', e => {
     const el = e.target.closest('[data-act]');
     if (!el) return;
@@ -1824,6 +1869,8 @@ window.PP = {
   state, save, render, doSync, importData, C, DB, get, live,
   syncNow: async () => { await idle(); await doSync(); await idle(); return state.sync; },
   reload: async () => { state.recs = await DB.allRecords(); index(); render(); },
+  idleNow: () => { clearTimeout(idleTimer); document.documentElement.classList.add('idle'); },
+  IDLE_MS,
 };
 
 start();

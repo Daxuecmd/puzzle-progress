@@ -6,14 +6,20 @@
   --surface: #FFFFFF;
   --ink: #1D2433;
   --ink-2: #5A6170;
-  --ink-3: #959AA4;
+  --ink-3: #626874;  /* 对比度 5.07:1；原 #959AA4 只有 2.56:1 */
   --slot: #E1E3DC;
   --line: #E6E8E2;
-  --warn: #B4472F;
-  --ok: #3F7D5C;
+  --warn: #A8402A;
+  --ok: #367052;
   --pz: #3E5D83;
   --nav-h: 64px;
-  /* 动效：按下去立刻缩，松手用弹簧回位；只在用户动手和拼上那一刻动 */
+  /* 动效曲线，取自 Material 3 的令牌和它给网页的弹簧换算表（见 docs/motion-spec.md） */
+  --e-std: cubic-bezier(.2, 0, 0, 1);              /* standard */
+  --e-dec: cubic-bezier(.05, .7, .1, 1);           /* emphasized decelerate：进场 */
+  --e-acc: cubic-bezier(.3, 0, .8, .15);           /* emphasized accelerate：离场 */
+  --e-spatial: cubic-bezier(.38, 1.21, .22, 1);    /* expressive default spatial，500ms */
+  --e-fast: cubic-bezier(.27, 1.06, .18, 1);       /* standard fast spatial，350ms */
+  --e-effects: cubic-bezier(.34, .8, .34, 1);      /* expressive default effects，200ms */
   --ease-out: cubic-bezier(.22, 1, .36, 1);
   --spring: linear(0, .009, .035 2.1%, .141, .281 6.7%, .723 12.9%, .938 16.7%, 1.017, 1.077, 1.121, 1.149 24.3%, 1.159, 1.163, 1.161, 1.154 29.9%, 1.129 32.8%, 1.051 39.6%, 1.017 43.1%, .991, .977 51%, .975 57.1%, .997 69.8%, 1.003 76.9%, 1);
   --spring-soft: linear(0, .1 3%, .37 8%, .68 14%, .9 21%, 1.02 29%, 1.04 35%, 1.02 45%, 1 60%, 1);
@@ -64,8 +70,17 @@ h2 { font-size: 18px; line-height: 1.4; font-weight: 750; margin: 0; }
 }
 .tray.tap { cursor: pointer; }
 .jig { display: block; width: 100%; height: auto; overflow: visible; }
+/* 拼图分四层叠放（app.js jigsawSvg）：第一层占位，其余叠在上面；只有拼块本身可点 */
+.jigw { position: relative; }
+.jigw > .jig + .jig { position: absolute; inset: 0; }
+.jigw > .jig { pointer-events: none; }
+.jigw g.tap { pointer-events: auto; }
+/* 大图每层各自交给显卡，画面层动时其他层不跟着重画；小缩略图不需要 */
+.jigw:not(.mini) > .jig { will-change: transform; }
 .jig .fill { fill: var(--slot); fill-opacity: .86; }
-.jig .ghost-art { filter: saturate(.35); }
+/* 影子层原来加了 saturate 滤镜；画面一动整张图每帧重画、滤镜也每帧重算（perf-check 实测）。
+   它本来就被 86% 不透明的空位盖着，改成整体淡一点，效果几乎一样 */
+.jig .ghost-art { opacity: .55; }
 .jig .seam { fill: none; stroke: #fff; stroke-width: 2.4; stroke-linejoin: round; }
 .jig .doing .fill { fill: #F7F8F5; fill-opacity: .93; }
 .jig .doing .seam { stroke: var(--ink); stroke-width: 3; stroke-dasharray: 7 6; }
@@ -79,18 +94,24 @@ h2 { font-size: 18px; line-height: 1.4; font-weight: 750; margin: 0; }
 .piece-hero { width: 168px; margin: 4px auto 18px; display: block; }
 .piece-hero .ghost { filter: url(#mono); opacity: .5; }
 
-/* 拼上那一刻：这块从下方转着飞进整幅图里自己的空位，卡住时边缘一闪，光扫过画面，数字跳一格 */
-.placed-overlay { position: fixed; inset: 0; background: rgba(243, 244, 240, .96); display: grid; place-items: center; z-index: 60; padding: 24px; cursor: pointer; animation: fade .25s var(--ease-out) both; }
+/* 拼上（日常，规格表：750ms 内播完）：遮罩 150ms → 这块 50ms 起飞 500ms → 画面跟涨 150ms 起 450ms
+   → 550ms 卡住一闪、数字跳格、振动 */
+.placed-overlay { position: fixed; inset: 0; background: rgba(243, 244, 240, .96); display: grid; place-items: center; z-index: 60; padding: 24px; cursor: pointer; animation: fade .15s var(--e-std) both; }
 .placed-stage { width: min(340px, 84vw); text-align: center; }
-.placed-stage .tray { padding: 10px; animation: rise .55s var(--spring-soft) both; }
-/* 飞行要看得清：用带一点回弹的曲线走完 .75 秒，而不是弹簧（弹簧 130ms 就到位了） */
-.placed-overlay .arrive { transform-box: fill-box; transform-origin: 50% 50%; animation: fly-in .75s .15s cubic-bezier(.3, 1.25, .45, 1) both; }
-.placed-overlay .arrive-edge { fill: none; stroke: #fff; stroke-width: 5; stroke-linejoin: round; stroke-opacity: 0; animation: flash .7s .82s var(--ease-out) both; }
-.placed-overlay .sheen { transform-box: fill-box; animation: sweep 1.1s .95s cubic-bezier(.45, 0, .25, 1) both; }
+.placed-stage .tray { padding: 10px; }
+.placed-overlay .arrive { transform-box: fill-box; transform-origin: 50% 50%; animation: fly-in .5s .05s var(--e-spatial) both; }
+.placed-overlay .arrive-edge { fill: none; stroke: #fff; stroke-width: 5; stroke-linejoin: round; stroke-opacity: 0; animation: flash .15s .55s var(--e-effects) both; }
+.placed-overlay .sheen { display: none; }
 .placed-count { margin: 22px 0 0; font-size: 16px; color: var(--ink-3); font-weight: 650; }
 .placed-count b { display: inline-block; font-size: 46px; line-height: 1; font-weight: 800; color: var(--ink); letter-spacing: -.02em; }
-.placed-count b.bump { animation: bump .55s var(--spring) both; }
-.placed-sub { margin: 10px 0 0; font-size: 17px; font-weight: 750; animation: fade .4s 1s both; }
+.placed-count b.bump { animation: bump .2s var(--e-effects) both; }
+.placed-sub { margin: 10px 0 0; font-size: 17px; font-weight: 750; animation: fade .2s .55s var(--e-effects) both; }
+/* 里程碑（拼完整幅 / 第一笔收款）才放大：缝隙消失，光扫过整幅画，约 1.8 秒 */
+.celebrate .jig .seam, .celebrate .jig .fill { animation: m-dissolve .6s .65s var(--e-std) both; }
+.celebrate .sheen { display: inline; transform-box: fill-box; animation: sweep 1.1s .7s var(--e-std) both; }
+.celebrate .placed-stage .tray { animation: swell .9s .6s var(--e-fast) both; }
+@keyframes m-dissolve { to { opacity: 0; } }
+@keyframes swell { 40% { transform: scale(1.04); } }
 .placed-sub span { display: block; margin-top: 2px; font-size: 14px; font-weight: 400; color: var(--ink-2); }
 @keyframes fly-in { 0% { transform: translate(22%, 135%) rotate(-26deg) scale(1.18); opacity: 0; } 12% { opacity: 1; } 100% { transform: none; opacity: 1; } }
 @keyframes flash { 0%, 100% { stroke-opacity: 0; } 25% { stroke-opacity: .95; } }
@@ -100,47 +121,47 @@ h2 { font-size: 18px; line-height: 1.4; font-weight: 750; margin: 0; }
 @keyframes fade { from { opacity: 0; } }
 
 /* ---------- 动效模型（motion.js 画画面，这里让它动） ---------- */
-/* 拼块本身：正在做的那块描边像蚂蚁线一样走、底色轻轻呼吸；静物只呼吸 */
-.jig .doing .seam { animation: m-march 1.1s linear infinite; }
-.jig .doing .fill { animation: m-breathe 3.2s ease-in-out infinite alternate; }
+/* 拼块本身：正在做的那块描边像蚂蚁线一样走、底色轻轻呼吸；静物只呼吸
+   呼吸一周期 12 秒，幅度小：避开 Apple 提醒的约 0.2Hz 持续摆动 */
+.jig .doing .seam { animation: m-march 1.25s linear infinite; }
+.jig .doing .fill { animation: m-breathe 6s ease-in-out infinite alternate; }
 .jig.m-still .doing .seam { animation: none; }
 @keyframes m-march { to { stroke-dashoffset: -13; } }
-@keyframes m-breathe { to { fill-opacity: .62; } }
+@keyframes m-breathe { to { opacity: .8; } }
 .jig.mini .doing .seam { animation: none; }
-/* 打开拼图页时，已拼上的块依次亮出来 */
-.jig .m-cover { fill: var(--slot); animation: m-uncover .5s calc(var(--k) * 70ms + 120ms) var(--ease-out) both; }
+/* 打开拼图页时，已拼上的块依次亮出来：每块 300ms，错开 40ms */
+.jig .m-cover { fill: var(--slot); animation: m-uncover .3s calc(var(--k) * 40ms + 100ms) var(--e-std) both; }
 /* 各模型亮出来的样子不同：晨光从上往下淡出，潮汐像退潮一样往下沉，星图像星星一样一闪亮起 */
 .jig.m-tide .m-cover { animation-name: m-sink; }
-.jig.m-stars .m-cover { fill: #23233C; animation-name: m-blink; animation-duration: .7s; }
+.jig.m-stars .m-cover { fill: #23233C; animation-name: m-blink; animation-duration: .4s; }
 @keyframes m-sink { to { opacity: 0; transform: translateY(14px); } }
 @keyframes m-blink { 30% { opacity: .2; } 45% { opacity: .7; } to { opacity: 0; } }
 @keyframes m-uncover { to { opacity: 0; } }
 
 /* 晨光 */
-.m-cloud { animation: m-drift var(--d, 46s) ease-in-out infinite alternate; }
-.focusing .m-cloud { animation-duration: calc(var(--d, 46s) * 2.2); }
+.m-cloud { animation: m-drift var(--d, 46s) linear infinite alternate; }
 @keyframes m-drift { to { transform: translateX(var(--dx, 24px)); } }
 .m-glow { transform-box: fill-box; transform-origin: center; animation: m-glow 6s ease-in-out infinite alternate; }
 @keyframes m-glow { to { transform: scale(1.14); opacity: .5; } }
-.rising .m-sun { animation: m-rise 1.5s .95s var(--ease-out) both; }
+.rising .m-sun { animation: m-rise .45s .15s var(--e-fast) both; }
 @keyframes m-rise { from { transform: translateY(var(--rise, 0)); } }
 
 /* 潮汐 */
 .m-wave { animation: m-wave var(--d, 7s) linear infinite; }
-.focusing .m-wave { animation-duration: calc(var(--d, 7s) * 1.8); }
 @keyframes m-wave { to { transform: translateX(calc(-1 * var(--L))); } }
-.m-glint { animation: m-glint 3.4s var(--k, 0s) ease-in-out infinite; }
+.m-glint { animation: m-glint 3.5s var(--k, 0s) ease-in-out infinite; }
 @keyframes m-glint { 50% { opacity: .1; } }
-.rising .m-water { animation: m-rise 1.5s .95s var(--ease-out) both; }
+.rising .m-water { animation: m-rise .45s .15s var(--e-fast) both; }
 
 /* 星图 */
 .m-tw { animation: m-tw 4s var(--k, 0s) ease-in-out infinite; }
 @keyframes m-tw { 50% { opacity: .15; } }
 .m-aurora { animation: m-aurora 14s ease-in-out infinite alternate; }
 @keyframes m-aurora { to { transform: translateY(6px) skewX(-6deg); opacity: .25; } }
-.m-star circle:first-child { transform-box: fill-box; transform-origin: center; animation: m-glow 3.6s ease-in-out infinite alternate; }
-.rising .m-star.new { transform-box: fill-box; transform-origin: center; animation: m-pop .7s 1s var(--spring) both; }
-.rising .m-line.new { animation: m-draw .9s .95s var(--ease-out) both; }
+.m-halo { animation: m-halo 3.5s ease-in-out infinite alternate; }
+@keyframes m-halo { to { opacity: .45; } }
+.rising .m-star.new { transform-box: fill-box; transform-origin: center; animation: m-pop .2s .55s var(--e-effects) both; }
+.rising .m-line.new { animation: m-draw .45s .15s var(--e-fast) both; }
 @keyframes m-pop { from { transform: scale(0); opacity: 0; } }
 @keyframes m-draw { from { stroke-dashoffset: var(--len); } }
 .m-shoot { opacity: 0; animation: m-shoot 9s 2s ease-in infinite; }
@@ -148,6 +169,30 @@ h2 { font-size: 18px; line-height: 1.4; font-weight: 750; margin: 0; }
 
 /* 小图标里的画面不动 */
 .pc *, .piece-hero * { animation: none !important; }
+/* 性能（perf-check 实测）：空位底下那层灰影子带滤镜，里面一动整层每帧重算滤镜，潮汐、星图因此占满主线程。
+   影子层一律不动；首页、列表的小缩略图也不跑循环动画（落位遮罩和设置里的小样除外） */
+.jig .ghost-art * { animation: none !important; }
+/* 星图的星座只在拼上的块里出现；影子层里也画的话，会透过空位露出线条，看着像脏了（自查截图发现） */
+.jig .ghost-art :is(.m-line, .m-star, .m-halo) { display: none; }
+.jig.mini:not(.live):not(.rising) :is(.m-cloud, .m-glow, .m-wave, .m-glint, .m-tw, .m-aurora, .m-halo, .m-shoot) { animation: none; }
+
+/* 性能：大块背景的慢循环不需要每秒重画 120 次。用 steps() 把它们降到每秒约 10–15 次，
+   移动很慢看不出跳，重画少八成以上；跟手的动画（按下、落位、弹层）不受影响 */
+/* 每秒 12 拍：步数 = 时长 × 12；起点（--k）在 motion.js 里也取整到 1/12 秒 */
+.m-cloud, .m-wave { animation-timing-function: steps(var(--n, 90)); }
+.m-glow { animation-timing-function: steps(72); }
+/* 星图的闪烁、光晕、极光本来就慢，降到每秒 4 拍（仍在 12 拍的网格上）：星图拼图页实测最重 */
+.m-glint { animation-timing-function: steps(42); }
+.m-halo { animation-timing-function: steps(14); }
+.m-tw { animation-timing-function: steps(16); }
+.m-aurora { animation-timing-function: steps(56); }
+.m-shoot { animation-timing-function: steps(108); }
+.jig .doing .fill { animation-timing-function: steps(72); }
+.jig .doing .seam { animation-timing-function: steps(15); }
+#ambient::before, #ambient::after { animation-timing-function: steps(300) !important; }
+
+/* 30 秒没碰屏幕：循环动画全部停在当前帧（app.js 的 wake / idle） */
+html.idle .jig *, html.idle #ambient::before, html.idle #ambient::after, html.idle .focus .beat::after { animation-play-state: paused !important; }
 
 /* ---------- 页面背景：跟主线的进度、落后、专注走 ---------- */
 #ambient { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
@@ -157,7 +202,8 @@ h2 { font-size: 18px; line-height: 1.4; font-weight: 750; margin: 0; }
 .amb-dawn::before { left: -30%; right: -30%; top: -38vh; height: 78vh; background: radial-gradient(closest-side, var(--amb-a), transparent); opacity: calc(.18 + .5 * var(--amb-p)); animation: amb-float 26s ease-in-out infinite alternate; }
 .amb-dawn::after { right: -30%; bottom: -30vh; width: 90vw; height: 70vh; background: radial-gradient(closest-side, var(--amb-b), transparent); opacity: calc(.4 * var(--amb-u)); animation: amb-float 33s ease-in-out infinite alternate-reverse; }
 /* 潮汐：底部一片海色，进度越多涨得越高 */
-.amb-tide::before { left: -10%; right: -10%; bottom: -6vh; height: calc(16vh + 46vh * var(--amb-p)); background: linear-gradient(to top, var(--amb-a), transparent); opacity: .2; border-radius: 50% 50% 0 0 / 22px 22px 0 0; animation: amb-swell calc(10s - 5s * var(--amb-u)) ease-in-out infinite alternate; transition: height 1.4s var(--ease-out); }
+/* 只动位置：整片海固定 62vh 高，按进度往上推（transform），不改高度 */
+.amb-tide::before { left: -10%; right: -10%; bottom: -6vh; height: 62vh; background: linear-gradient(to top, var(--amb-a), transparent); opacity: .2; border-radius: 50% 50% 0 0 / 22px 22px 0 0; translate: 0 calc((1 - var(--amb-p)) * 46vh); animation: amb-swell calc(10s - 5s * var(--amb-u)) ease-in-out infinite alternate; transition: translate 1s var(--e-std); }
 .amb-tide::after { left: -20%; right: -20%; top: -30vh; height: 60vh; background: radial-gradient(closest-side, var(--amb-b), transparent); opacity: .35; }
 /* 星图：顶上一层夜色，落后时极光偏红 */
 .amb-stars::before { left: 0; right: 0; top: 0; height: 46vh; background: linear-gradient(to bottom, var(--amb-a), transparent); opacity: calc(.12 + .18 * var(--amb-p)); }
@@ -207,21 +253,28 @@ h2 { font-size: 18px; line-height: 1.4; font-weight: 750; margin: 0; }
 
 /* ---------- 专注：顶部一条 ---------- */
 .focus { position: relative; display: flex; align-items: center; gap: 12px; background: var(--ink); color: #fff; border-radius: 18px; padding: 9px 9px 11px 16px; margin-bottom: 14px; overflow: hidden; }
-.focus .beat { width: 8px; height: 8px; border-radius: 50%; background: #fff; flex: none; animation: beat 2.4s var(--ease-out) infinite; }
-@keyframes beat { 0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, .5); } 70%, 100% { box-shadow: 0 0 0 9px rgba(255, 255, 255, 0); } }
+/* 心跳只动位置和透明度：一个圆环放大淡出（原来用 box-shadow，每帧都要重绘） */
+.focus .beat { position: relative; width: 8px; height: 8px; border-radius: 50%; background: #fff; flex: none; }
+.focus .beat::after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 1.5px solid #fff; animation: beat 2.4s var(--ease-out) infinite; }
+@keyframes beat { from { transform: scale(1); opacity: .6; } 70%, to { transform: scale(2.6); opacity: 0; } }
 .focus .what { flex: 1; min-width: 0; font-size: 14.5px; font-weight: 600; cursor: pointer; }
 .focus .clock { font-size: 17px; font-weight: 750; font-variant-numeric: tabular-nums; letter-spacing: .01em; }
 .focus .btn { background: rgba(255, 255, 255, .14); color: #fff; padding: 7px 13px; }
 .focus .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255, 255, 255, .1); }
-.focus .bar i { display: block; height: 100%; background: rgba(255, 255, 255, .85); transition: width 1s linear; }
+.focus .bar i { display: block; height: 100%; background: rgba(255, 255, 255, .85); transform-origin: left; transition: transform 1s linear; }
 
 /* ---------- 首页 ---------- */
 .section.first { margin-top: 6px; }
-.suggest { display: flex; gap: 14px; align-items: flex-start; background: var(--surface); border-radius: 20px; padding: 16px 18px; margin-bottom: 20px; box-shadow: inset 0 0 0 1.5px var(--ink); animation: drop-in .6s var(--spring-soft) both; }
-.suggest .pc { width: 44px; height: 44px; animation: nudge .9s .25s var(--spring) both; }
+.suggest { display: flex; gap: 14px; align-items: flex-start; background: var(--surface); border-radius: 20px; padding: 16px 18px; margin-bottom: 20px; box-shadow: inset 0 0 0 1.5px var(--ink); animation: drop-in .25s var(--e-dec) both; }
+.suggest .pc { width: 44px; height: 44px; animation: nudge .35s .1s var(--e-fast) both; }
 .suggest .name { font-weight: 700; line-height: 1.45; }
 .suggest .small { margin: 2px 0 12px; }
-.suggest.leaving { animation: leave .26s var(--ease-out) forwards; }
+.suggest.leaving { animation: leave .2s var(--e-acc) forwards; }
+/* 挑完块回首页：今天的块逐行滑入，每行 250ms，错开 30ms */
+.today-row.enter { animation: row-in .25s calc(var(--i) * 30ms) var(--e-dec) both; }
+@keyframes row-in { from { transform: translateY(8px); opacity: 0; } }
+/* 进度那句话：正文灰，不用红色 */
+.pace { margin: 4px 0 0; font-size: 13px; color: var(--ink-2); }
 @keyframes drop-in { from { transform: translateY(-8px) scale(.98); opacity: 0; } }
 @keyframes nudge { from { transform: translate(-6px, 6px) rotate(-18deg); } }
 @keyframes leave { to { transform: translateX(28px); opacity: 0; } }
@@ -337,23 +390,29 @@ nav.tabs a.on { color: var(--ink); font-weight: 650; }
 
 /* ---------- 弹层 ---------- */
 .modal-wrap { position: fixed; inset: 0; background: rgba(29, 36, 51, .32); z-index: 50; display: flex; align-items: flex-end; justify-content: center; }
-.modal-wrap { animation: fade .2s var(--ease-out) both; }
-.modal { background: var(--surface); width: 100%; max-width: 540px; border-radius: 26px 26px 0 0; padding: 10px 20px calc(20px + env(safe-area-inset-bottom)); max-height: 88vh; overflow-y: auto; animation: up .5s var(--spring-soft) both; }
+/* 弹层：升起 300ms（emphasized decelerate），收起 200ms（emphasized accelerate），遮罩 150ms */
+.modal-wrap { animation: fade .15s var(--e-std) both; }
+.modal, .modal-out { background: var(--surface); width: 100%; max-width: 540px; border-radius: 26px 26px 0 0; padding: 10px 20px calc(20px + env(safe-area-inset-bottom)); max-height: 88vh; overflow-y: auto; animation: up .3s var(--e-dec) both; }
+.modal-wrap-out { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-end; justify-content: center; background: rgba(29, 36, 51, .32); pointer-events: none; animation: fade-out .2s var(--e-acc) forwards; }
+.modal-out { animation: down .2s var(--e-acc) forwards; }
+@keyframes down { to { transform: translateY(100%); } }
+@keyframes fade-out { to { opacity: 0; } }
 .modal::before { content: ""; display: block; width: 38px; height: 4px; border-radius: 2px; background: #D7DAD3; margin: 0 auto 14px; }
 .modal h2 { margin-bottom: 14px; }
-@keyframes up { from { transform: translateY(60%); opacity: .4; } }
+@keyframes up { from { transform: translateY(100%); } }
 @media (min-width: 700px) {
   .modal-wrap { align-items: center; }
   .modal { border-radius: 26px; }
 }
-.toast { position: fixed; left: 50%; bottom: calc(var(--nav-h) + 30px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 18px; border-radius: 999px; font-size: 14px; z-index: 70; max-width: 86vw; text-align: center; pointer-events: none; animation: toast-in .45s var(--spring-soft) both; }
+.toast { position: fixed; left: 50%; bottom: calc(var(--nav-h) + 30px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 18px; border-radius: 999px; font-size: 14px; z-index: 70; max-width: 86vw; text-align: center; pointer-events: none; animation: toast-in .2s var(--e-effects) both; }
 @keyframes toast-in { from { transform: translate(-50%, 12px) scale(.94); opacity: 0; } }
 
 /* 按下立刻缩一点，松手弹回 */
-.btn, .chip, .step, .fab, .row-item.tap, .tray.tap, .main-row, .glyph { transition: transform .5s var(--spring-soft), background-color .2s, box-shadow .2s; }
-.btn:active:not(:disabled), .chip:active, .step:active:not(:disabled) { transform: scale(.95); transition-duration: .08s; }
-.fab:active { transform: scale(.9); transition-duration: .08s; }
-.row-item.tap:active, .main-row:active, .tray.tap:active { transform: scale(.985); transition-duration: .1s; }
+/* 按下 80ms 缩一点（standard），松手 350ms 回弹（M3 standard fast spatial） */
+.btn, .chip, .step, .fab, .row-item.tap, .tray.tap, .main-row, .glyph { transition: transform .35s var(--e-fast), background-color .2s, box-shadow .2s; }
+.btn:active:not(:disabled), .chip:active, .step:active:not(:disabled) { transform: scale(.96); transition: transform .08s var(--e-std); }
+.fab:active { transform: scale(.92); transition: transform .08s var(--e-std); }
+.row-item.tap:active, .main-row:active, .tray.tap:active { transform: scale(.985); transition: transform .08s var(--e-std); }
 
 details summary { cursor: pointer; }
 .steps-list { padding-left: 20px; color: var(--ink-2); margin: 10px 0 14px; }

@@ -14,13 +14,36 @@ export const modelOf = id => MODELS.find(m => m.id === id) || MODELS[0];
 const f1 = n => n.toFixed(1);
 const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
 
+// 慢循环共用一个每秒 12 拍的节拍：时长、起点都取 1/12 秒的整数倍，配合 CSS steps()，
+// 整张图一秒最多重画 12 次（perf-check 实测：起点随机时几乎每帧都要重画）
+const TICK = 12;
+const beat = sec => Math.max(1, Math.round(sec * TICK)) / TICK;
+const loop = sec => { const d = beat(sec); return `--d:${d.toFixed(4)}s;--n:${Math.round(d * TICK)}`; };
+const at = sec => `--k:${beat(sec).toFixed(4)}s`;
+
 // 落后程度：时间过去的比例比进度多出多少（0 = 按时或超前，1 = 严重落后）
 export function urgency(pz, p, now = Date.now()) {
-  if (!pz?.deadline) return 0;
+  const t = timeFrac(pz, now);
+  return t == null ? 0 : clamp((t - p) * 1.6);
+}
+
+// 从开始到截止，时间过去了多少（0–1）；没截止日返回 null
+export function timeFrac(pz, now = Date.now()) {
+  if (!pz?.deadline) return null;
   const start = pz.createdAt || now;
   const end = new Date(pz.deadline + 'T23:59:59').getTime();
-  if (end <= start) return p >= 1 ? 0 : 1;
-  return clamp(((now - start) / (end - start) - p) * 1.6);
+  if (end <= start) return 1;
+  return clamp((now - start) / (end - start));
+}
+
+// 落后时的那句话：只陈述事实，不说「落后」，不用红色
+export function paceText(pz, done, total, now = Date.now()) {
+  const t = timeFrac(pz, now);
+  if (t == null || !total) return '';
+  const expect = Math.min(total, Math.round(t * total));
+  if (done >= expect) return '进度跟得上';
+  if (urgency(pz, done / total, now) < 0.15) return '';
+  return `按时间算该拼到 ${expect} 块，现在 ${done} 块`;
 }
 
 function ridge(r, W, H, base, amp, n) {
@@ -51,7 +74,7 @@ function dawn(seed, W, H, uid, s) {
     <circle cx="${f1(sx)}" cy="${f1(sy)}" r="${f1(sr)}" fill="${pal.sun}"/></g>`;
   for (let c = 0; c < 3; c++) {
     const cx = W * r(), cy = H * (0.1 + r() * 0.22), cw = W * (0.1 + r() * 0.12);
-    body += `<ellipse class="m-cloud" style="--d:${(38 + c * 17).toFixed(0)}s;--dx:${(18 + c * 10).toFixed(0)}px" cx="${f1(cx)}" cy="${f1(cy)}" rx="${f1(cw)}" ry="${f1(cw * 0.22)}" fill="#fff" opacity=".5"/>`;
+    body += `<ellipse class="m-cloud" style="${loop((38 + c * 17) * (s.focus ? 2.2 : 1))};--dx:${(18 + c * 10).toFixed(0)}px" cx="${f1(cx)}" cy="${f1(cy)}" rx="${f1(cw)}" ry="${f1(cw * 0.22)}" fill="#fff" opacity=".5"/>`;
   }
   pal.ridges.forEach((color, k) => { body += `<path d="${ridge(r, W, H, H * (0.4 + k * 0.155), H * (0.13 - k * 0.018), 5 + k * 2)}" fill="${color}"/>`; });
   return { defs, body };
@@ -69,19 +92,23 @@ function tide(seed, W, H, uid, s) {
   const sx = W * (0.22 + r() * 0.56), sy = H * (0.14 + r() * 0.1), sr = Math.min(W, H) * 0.08 + 5;
   const lvAt = p => H * (0.86 - 0.6 * p);
   const y = lvAt(s.p), lift = s.p0 == null ? 0 : lvAt(s.p0) - y;
-  const L = W / 3, A = 5 + 9 * s.u, T = (7.5 - 4.5 * s.u).toFixed(1);
+  const L = W / 3, A = 5 + 9 * s.u, T = (7.5 - 4.5 * s.u) * (s.focus ? 1.8 : 1);
   const defs = `<linearGradient id="${uid}-sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${pal.sky[0]}"/><stop offset="1" stop-color="${pal.sky[1]}"/></linearGradient>
     <linearGradient id="${uid}-sea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7FAAC6"/><stop offset="1" stop-color="#2E4F6D"/></linearGradient>`;
   let body = `<rect x="-40" y="-40" width="${W + 80}" height="${H + 80}" fill="url(#${uid}-sky)"/>
     <circle class="m-glow" cx="${f1(sx)}" cy="${f1(sy)}" r="${f1(sr * 1.9)}" fill="${pal.sun}" opacity=".35"/><circle cx="${f1(sx)}" cy="${f1(sy)}" r="${f1(sr)}" fill="${pal.sun}"/>
     <path d="${ridge(r, W, H, H * 0.5, H * 0.12, 5)}" fill="${pal.ridges[0]}" opacity=".75"/>
     <g class="m-water" style="--rise:${f1(lift)}px">
-      <path class="m-wave" style="--d:${T}s;--L:${f1(L)}px" d="${wave(W, y - 7, L, A * 0.7)}" fill="#B7D2E2" opacity=".75"/>
-      <path class="m-wave back" style="--d:${(T * 1.35).toFixed(1)}s;--L:${f1(L)}px" d="${wave(W, y, L, A)}" fill="url(#${uid}-sea)"/>`;
+      <path class="m-wave" style="${loop(T)};--L:${f1(L)}px" d="${wave(W, y - 7, L, A * 0.7)}" fill="#B7D2E2" opacity=".75"/>
+      <path class="m-wave back" style="${loop(T * 1.35)};--L:${f1(L)}px" d="${wave(W, y, L, A)}" fill="url(#${uid}-sea)"/>`;
+  // 水面闪光合成一组一起明暗（一个动画；各自一个时 perf-check 实测样式重算偏高）
+  const glints = [];
   for (let k = 0; k < 6; k++) {
     const gx = W * r(), gy = y + 14 + r() * (H - y);
-    body += `<rect class="m-glint" style="--k:${(r() * 4).toFixed(2)}s" x="${f1(gx)}" y="${f1(gy)}" width="${f1(8 + r() * 14)}" height="1.6" rx=".8" fill="#fff" opacity=".55"/>`;
+    r();
+    glints.push(`<rect x="${f1(gx)}" y="${f1(gy)}" width="${f1(8 + r() * 14)}" height="1.6" rx=".8" fill="#fff" opacity=".55"/>`);
   }
+  body += `<g class="m-glint">${glints.join('')}</g>`;
   return { defs, body: body + '</g>' };
 }
 
@@ -94,9 +121,15 @@ function stars(seed, W, H, uid, s) {
     <linearGradient id="${uid}-au" x1="0" x2="1"><stop offset="0" stop-color="${s.u > 0.5 ? '#F2A0A8' : '#8FE3C0'}" stop-opacity="0"/><stop offset=".5" stop-color="${s.u > 0.5 ? '#F2A0A8' : '#8FE3C0'}" stop-opacity=".55"/><stop offset="1" stop-color="#B9A8F5" stop-opacity="0"/></linearGradient>`;
   let body = `<rect x="-40" y="-40" width="${W + 80}" height="${H + 80}" fill="url(#${uid}-sky)"/>
     <path class="m-aurora" d="M-40 ${f1(H * 0.3)} C${f1(W * 0.3)} ${f1(H * 0.12)} ${f1(W * 0.6)} ${f1(H * 0.42)} ${W + 40} ${f1(H * 0.2)} L${W + 40} ${f1(H * 0.32)} C${f1(W * 0.6)} ${f1(H * 0.52)} ${f1(W * 0.3)} ${f1(H * 0.24)} -40 ${f1(H * 0.42)} Z" fill="url(#${uid}-au)" opacity="${(0.35 + 0.4 * s.u).toFixed(2)}"/>`;
+  // 46 颗背景星分 4 组：一组不闪，三组错开节拍整组一起闪。
+  // perf-check 实测：每颗星各自一个动画时，样式重算占主线程近两成；按组闪只剩 3 个动画
+  const groups = [[], [], [], []];
   for (let k = 0; k < 46; k++) {
-    body += `<circle class="m-tw" style="--k:${(r() * 5).toFixed(2)}s" cx="${f1(W * r())}" cy="${f1(H * 0.7 * r())}" r="${(0.5 + r() * 1.1).toFixed(2)}" fill="#fff" opacity="${(0.35 + r() * 0.5).toFixed(2)}"/>`;
+    const g = k % 4;
+    r();
+    groups[g].push(`<circle cx="${f1(W * r())}" cy="${f1(H * 0.7 * r())}" r="${(0.5 + r() * 1.1).toFixed(2)}" fill="#fff" opacity="${(0.35 + r() * 0.5).toFixed(2)}"/>`);
   }
+  body += `<g>${groups[0].join('')}</g>` + [1, 2, 3].map(g => `<g class="m-tw" style="${at(g * 1.25)}">${groups[g].join('')}</g>`).join('');
   body += `<path d="${ridge(r, W, H, H * 0.78, H * 0.1, 6)}" fill="#2B2747" opacity=".9"/><path d="${ridge(r, W, H, H * 0.9, H * 0.08, 8)}" fill="#15142A"/>`;
   // 星座：每块拼上的位置附近一颗亮星，按拼上的先后连线
   const pts = (s.done || []).slice().sort((a, b) => (a.at || 0) - (b.at || 0)).map(d => {
@@ -107,8 +140,10 @@ function stars(seed, W, H, uid, s) {
     const a = pts[k - 1], b = pts[k], len = Math.hypot(b.x - a.x, b.y - a.y);
     body += `<line class="m-line ${pts[k].i === s.newest ? 'new' : ''}" style="--len:${f1(len)}" x1="${f1(a.x)}" y1="${f1(a.y)}" x2="${f1(b.x)}" y2="${f1(b.y)}" stroke="#E9E5FF" stroke-width="1.3" stroke-dasharray="${f1(len)}" opacity=".6"/>`;
   }
+  // 亮星的光晕合成一组一起呼吸（一个动画），星芯各自一个元素，新拼上的那颗单独弹出
+  body += `<g class="m-halo">${pts.map(p => `<circle cx="${f1(p.x)}" cy="${f1(p.y)}" r="9" fill="#fff" opacity=".18"/>`).join('')}</g>`;
   for (const p of pts) {
-    body += `<g class="m-star ${p.i === s.newest ? 'new' : ''}"><circle cx="${f1(p.x)}" cy="${f1(p.y)}" r="9" fill="#fff" opacity=".18"/><circle cx="${f1(p.x)}" cy="${f1(p.y)}" r="3.2" fill="#fff"/></g>`;
+    body += `<g class="m-star ${p.i === s.newest ? 'new' : ''}"><circle cx="${f1(p.x)}" cy="${f1(p.y)}" r="3.2" fill="#fff"/></g>`;
   }
   if (s.focus) body += `<line class="m-shoot" x1="${f1(W * 0.85)}" y1="${f1(H * 0.06)}" x2="${f1(W * 0.85 - 46)}" y2="${f1(H * 0.06 + 22)}" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>`;
   return { defs, body };
