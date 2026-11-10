@@ -373,13 +373,13 @@ await t('10 抽卡：有 7 张卡时抽 5 张不重复，3 张时抽 3 张', asy
 const AUTO_SUGGEST = (id, pieceId) => JSON.stringify({ id, type: 'auto', kind: 'suggest', pieceId, ref: 'T900', text: 'T900 假任务 已待验收',
   evidence: [{ kind: 'link', text: 'R1 报告', url: 'D:\\假路径\\R1-REPORT.md' }], dismissed: false, createdAt: 1 });
 
-await t('12 首页顺序：可以拼上 → 今天做这几块 → 主线一行 → 今天电脑上做了', async () => {
+await t('12 首页顺序（v1.4）：主线这幅画 → 可以拼上 → 今天做这几块 → 今天电脑上做了', async () => {
   const pid = await A.eval(`PP.live("piece").find(p => p.puzzleId === "${mainId}" && p.status !== "done").id`);
   await A.eval(`(async () => {
     await PP.save(${AUTO_SUGGEST('auto-sg-1', pid)}, { id: 'auto-day-1', type: 'auto', kind: 'day', day: PP.C.dayStr(), project: 'demo', projectName: '假项目', lines: ['T900 假任务：执行中 → 待验收', '提交 2 次：甲；乙'], refs: ['T900'], createdAt: Date.now() });
     location.hash = '#/'; PP.render();
   })()`);
-  const order = await A.eval(`['.suggest', '#home-today', '#home-main', '#home-auto'].map(s => document.querySelector(s)?.getBoundingClientRect().top ?? -1)`);
+  const order = await A.eval(`['#home-main', '.suggest', '#home-today', '#home-auto'].map(s => document.querySelector(s)?.getBoundingClientRect().top ?? -1)`);
   assert.ok(order.every(v => v >= 0), '四节都要在：' + order);
   assert.deepEqual([...order].sort((a, b) => a - b), order, '顺序不对：' + order);
 });
@@ -515,7 +515,7 @@ await t('20 进度那句话：落后时说事实、不用红色；跟上时说�
   assert.equal(M[1], '进度跟得上');
   assert.ok(!/落后|太慢|失败/.test(M.join('')), '不许用责备的词');
   const color = await A.eval(`(() => { const d = document.createElement('div'); d.className = 'pace'; document.body.appendChild(d); const c = getComputedStyle(d).color; d.remove(); return c; })()`);
-  assert.equal(color, 'rgb(90, 97, 112)', '进度那句话应是正文灰');
+  assert.equal(color, 'rgb(90, 95, 122)', '进度那句话应是正文灰（v1.4 起正文灰是 #5A5F7A）');
 });
 
 await t('页面没有报错', async () => {

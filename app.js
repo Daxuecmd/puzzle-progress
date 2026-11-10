@@ -3,7 +3,7 @@ import * as DB from './db.js';
 import * as S from './sync.js';
 import * as M from './motion.js';
 
-export const VERSION = '1.3.0';
+export const VERSION = '1.4.0';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -204,6 +204,7 @@ async function hydrate() {
     const u = await fileUrl(el.dataset.file);
     if (!u) continue;
     if (el.tagName === 'A') el.href = u;
+    else if (el.tagName.toLowerCase() === 'image') el.setAttribute('href', u); // 拼图自己的画（SVG 里的图）
     else el.src = u;
   }
 }
@@ -354,14 +355,24 @@ function sceneState(pz, ps, J, arriving) {
 // 整幅拼图：拼上的块露出这幅拼图自己的画面，空位是灰的；画面按动效模型跟着任务情况动
 // arriving：刚拼上的那块先空着，再从下方飞进自己的位置（落位动画用）
 // reveal：打开拼图页时已拼上的块按模型的顺序依次亮出来
-function jigsawSvg(pz, { mini = false, arriving = null, model = motionModel(), reveal = false, live = false } = {}) {
+// 这幅拼图自己的画（v1.4）：pz.art 是数据仓库里的一张图（只进私有数据仓库，不进代码仓库）；
+// pz.artCells 可选，写每一块在图上占第几格（画的故事顺序和「从左到右、从上到下」不一样时用）
+function jigOf(pz, n) {
+  const J = C.jigsaw(n), m = pz.artCells;
+  return Array.isArray(m) && m.length === n ? { ...J, pieces: m.map(k => J.pieces[k] || J.pieces[0]) } : J;
+}
+const imgArt = (pz, W, H) => ({ defs: '', body: `<image data-file="${esc(pz.art)}" ${urlCache.has(pz.art) ? `href="${urlCache.get(pz.art)}"` : ''} x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="xMidYMid slice"/>` });
+
+// marks：首屏把今天的块标成 1、2、3（Map：拼块 id → 序号）；want：等用户点「算拼上」的那块，描一圈走动的暖光边
+function jigsawSvg(pz, { mini = false, arriving = null, model = motionModel(), reveal = false, live = false, marks = null, want = null } = {}) {
   const ps = piecesOf(pz.id);
   if (!ps.length) return `<div class="empty">还没有拼块，先在下面加一块。</div>`;
-  const J = C.jigsaw(ps.length);
+  const J = jigOf(pz, ps.length);
   const W = J.cols * J.size, H = J.rows * J.size;
   const uid = 'j' + (++svgSeq);
   const st = sceneState(pz, ps, J, arriving);
-  const art = M.scene(model, pz.id, W, H, uid, st);
+  if (pz.art) model = 'still';
+  const art = pz.art ? imgArt(pz, W, H) : M.scene(model, pz.id, W, H, uid, st);
   const sts = ps.map(p => (p.id === arriving ? 'empty' : pieceState(p)));
   const doneIdx = sts.map((s, i) => (s === 'done' ? i : -1)).filter(i => i >= 0);
   const ai = ps.findIndex(p => p.id === arriving);
@@ -370,8 +381,13 @@ function jigsawSvg(pz, { mini = false, arriving = null, model = motionModel(), r
   // 减少动态效果时不生成遮盖层，否则动画被关掉后已拼的块会一直被盖住
   const covers = reveal && model !== 'still' && !matchMedia('(prefers-reduced-motion: reduce)').matches ? revealOrder.map((i, k) => `<path class="m-cover" style="--k:${k}" d="${J.pieces[i].d}"/>`).join('') : '';
   const slot = i => `<g class="${sts[i]}"><path class="fill" d="${J.pieces[i].d}"/></g>`;
-  const seam = i => { const g = J.pieces[i]; return `<g class="${sts[i]} ${mini ? '' : 'tap'}" data-piece="${ps[i].id}" ${mini ? '' : `data-act="go" data-to="#/piece/${ps[i].id}"`}>
-      <path class="seam" d="${g.d}" style="fill:transparent"/>${mini || sts[i] === 'done' ? '' : `<text x="${g.cx}" y="${g.cy}">${i + 1}</text>`}</g>`; };
+  const label = i => { const g = J.pieces[i];
+    if (mini || sts[i] === 'done') return '';
+    if (!marks) return `<text x="${g.cx}" y="${g.cy}">${i + 1}</text>`;
+    const n = marks.get(ps[i].id);
+    return n ? `<g class="bdg ${want === ps[i].id ? 'b0' : ''}"><circle cx="${g.cx}" cy="${g.cy}" r="17"/><text x="${g.cx}" y="${g.cy + 1}">${n}</text></g>` : ''; };
+  const seam = i => { const g = J.pieces[i]; return `<g class="${sts[i]} ${want === ps[i].id && sts[i] !== 'done' ? 'want' : ''} ${mini ? '' : 'tap'}" data-piece="${ps[i].id}" ${mini ? '' : `data-act="go" data-to="#/piece/${ps[i].id}"`}>
+      <path class="seam" d="${g.d}" style="fill:transparent"/>${label(i)}</g>`; };
   const idx = J.pieces.map((_, i) => i);
   const doing = idx.filter(i => sts[i] === 'doing');
   // 分四层叠放（perf-check 实测：整张一层时，画面一动连不动的影子、拼缝都要每帧重画）：
@@ -407,7 +423,7 @@ function pieceArt(p, { big = false } = {}) {
   const i = ps.findIndex(x => x.id === p.id);
   const pz = get(p.puzzleId);
   if (i < 0 || !pz) return '';
-  const J = C.jigsaw(ps.length);
+  const J = jigOf(pz, ps.length);
   const W = J.cols * J.size, H = J.rows * J.size;
   const g = J.pieces[i];
   const x = g.cx - 80, y = g.cy - 80;
@@ -415,7 +431,7 @@ function pieceArt(p, { big = false } = {}) {
   const st = pieceState(p);
   let inner;
   if (st === 'done') {
-    const art = M.scene(motionModel(), pz.id, W, H, uid, sceneState(pz, ps, J, null));
+    const art = pz.art ? imgArt(pz, W, H) : M.scene(motionModel(), pz.id, W, H, uid, sceneState(pz, ps, J, null));
     inner = `<defs>${art.defs}<clipPath id="${uid}-c"><path d="${g.d}"/></clipPath></defs><g clip-path="url(#${uid}-c)">${art.body}</g>`;
   } else {
     inner = `<path d="${g.d}" fill="${st === 'doing' ? '#F7F8F5' : 'var(--slot)'}" ${st === 'doing' ? 'stroke="var(--ink)" stroke-width="3" stroke-dasharray="7 6"' : ''}/>`;
@@ -471,42 +487,62 @@ function pageHome() {
     return h;
   }
 
-  // 第一屏的顺序：能拼上的 → 今天做这几块 → 主线拼图一行 → 今天电脑上做了
-  for (const s of suggestions()) {
+  // v1.4 第一屏（方向二「画就是首屏」）：主线这幅画占上半屏 → 面板里先放「电脑做完、等你点」的 → 今天的块 → 今天电脑上做了
+  // 今天的块：自己挑过就用自己挑的；没挑过就用电脑今天早上挑好的（type:auto, kind:advice）
+  const sug = suggestions();
+  const adv = autos('advice').filter(a => a.day === C.dayStr()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+  const pickOf = id => (adv?.picks || []).find(k => k.pieceId === id) || null;
+  const fromAdvice = !today.length && !!adv;
+  const rows = (today.length ? today : (adv?.picks || []).map(k => get(k.pieceId)).filter(p => p && p.status !== 'done').slice(0, 3))
+    .filter(p => !sug.some(s => s.pieceId === p.id));
+  // 画上的序号和面板里的序号是同一套：先是等你点的，再是今天要做的
+  const marks = new Map();
+  for (const s of sug) if (get(s.pieceId)?.puzzleId === m.id) marks.set(s.pieceId, marks.size + 1);
+  const sugNo = new Map(sug.map((s, i) => [s.id, i + 1]));
+  rows.forEach((p, i) => { if (p.puzzleId === m.id) marks.set(p.id, sug.length + i + 1); });
+  const pr = progress(m);
+  const pace = M.paceText(m, pr.done, pr.total);
+  const total = sug.length + rows.length;
+
+  h = `<div class="hero" id="home-main">
+    <div class="hero-top"><button class="hchip ellipsis" data-act="go" data-to="#/puzzle/${m.id}">${esc(m.name)}</button><span class="grow"></span>${syncBadge()}
+      <button class="icon-btn" data-act="go" data-to="#/settings" aria-label="设置">${ICON.gear}</button></div>
+    ${jigsawSvg(m, { marks, want: sug[0]?.pieceId || null, live: true })}
+  </div>
+  <div class="hsheet">`;
+  if (f) h += focusBar(f);
+  h += `<div class="hhd"><h1>${total ? `今天 <em class="num">${total}</em> 块` : '今天还没挑'}</h1>
+    <button class="hcount" data-act="go" data-to="#/puzzle/${m.id}" aria-label="已拼 ${pr.done} / ${pr.total}"><b class="num">${pr.done}</b><span> / ${pr.total}</span><small>${esc(daysLeft(m.deadline))}</small></button></div>`;
+  if (pace) h += `<div class="pace" id="home-pace">${esc(pace)}</div>`;
+
+  for (const s of sug) {
     const p = get(s.pieceId);
     h += `<div class="suggest" id="suggest-${esc(s.id)}">
-      ${pieceArt(p)}
-      <div class="grow"><div class="name">可以拼上：${esc(p.name)}</div><div class="small">${esc(s.text || '')}</div>
-        <div class="btns"><button class="btn sm" data-act="suggest-place" data-id="${esc(s.id)}">拼上</button>
-        <button class="btn sm soft" data-act="suggest-dismiss" data-id="${esc(s.id)}">忽略</button></div></div>
+      <div class="tag"><i class="num">${sugNo.get(s.id)}</i>电脑已做完，证据填好了</div>
+      <div class="name">${esc(p.name)}</div><div class="small">${esc(s.text || '')}</div>
+      <div class="btns"><button class="btn yes" data-act="suggest-place" data-id="${esc(s.id)}">算拼上</button>
+        <button class="btn no" data-act="suggest-dismiss" data-id="${esc(s.id)}">不算</button></div>
     </div>`;
   }
 
-  h += `<div class="section first" id="home-today"><div class="section-head"><h2>今天做这几块</h2>${today.length ? `<button class="link" data-act="pick-today">调整</button>` : ''}</div>`;
-  if (!today.length) {
-    h += `<div class="sheet pad"><p style="margin:0 0 14px;color:var(--ink-2)">开工前挑 1 到 3 块，今天只做这几块。</p>
-      <button class="btn" data-act="pick-today">挑今天的块</button></div>`;
+  h += `<div id="home-today">`;
+  if (!rows.length) {
+    h += sug.length ? '' : `<div class="hempty"><p>开工前挑 1 到 3 块，今天只做这几块。</p><button class="btn" data-act="pick-today">挑今天的块</button></div>`;
   } else {
-    h += `<div class="sheet">${today.map((p, i) => {
-      const focusing = f?.pieceId === p.id;
-      return `<div class="row-item today-row ${state.ui.todayEnter ? 'enter' : ''}" style="--i:${i}">
-        ${pieceArt(p)}
+    h += rows.map((p, i) => {
+      const focusing = f?.pieceId === p.id, k = pickOf(p.id);
+      const sub = k?.next ? `下一步：${esc(k.next)}` : `${get(p.puzzleId)?.lane === 'side' ? '副线，' : ''}已专注 ${C.fmtDuration(focusTotal(p.id))}，记了 ${notesOf(p.id).length} 条`;
+      return `<div class="today-row ${state.ui.todayEnter ? 'enter' : ''}" style="--i:${i}">
+        <span class="n num">${sug.length + i + 1}</span>
         <div class="grow tap" data-act="go" data-to="#/piece/${p.id}"><div class="name ellipsis">${esc(p.name)}</div>
-          <div class="faint">${get(p.puzzleId)?.lane === 'side' ? '副线，' : ''}已专注 ${C.fmtDuration(focusTotal(p.id))}，记了 ${notesOf(p.id).length} 条</div></div>
+          <div class="sub ${k?.next ? 'next' : ''}">${sub}</div></div>
+        ${k?.mins ? `<time>${Number(k.mins)} 分钟</time>` : ''}
         ${focusing ? '<span class="state doing">专注中</span>' : f ? '' : `<button class="btn sm line" data-act="focus-start" data-id="${p.id}">专注</button>`}
       </div>`;
-    }).join('')}</div>`;
+    }).join('');
+    h += `<button class="link quiet hswap" data-act="pick-today">${fromAdvice ? '电脑早上挑的，不合适就换一块' : '调整今天的块'}</button>`;
   }
   h += `</div>`;
-
-  const pr = progress(m);
-  h += `<div class="main-row tap" data-act="go" data-to="#/puzzle/${m.id}" id="home-main">
-    <div class="thumb">${jigsawSvg(m, { mini: true })}</div>
-    <div class="grow"><div class="count"><b class="num">${pr.done}</b><span> / ${pr.total}</span></div>
-      <div class="name">${esc(m.name)}</div>
-      <div class="faint">${esc(daysLeft(m.deadline))}，${esc(m.acceptor)}说了算</div>
-      ${M.paceText(m, pr.done, pr.total) ? `<div class="pace" id="home-pace">${esc(M.paceText(m, pr.done, pr.total))}</div>` : ''}</div>
-  </div>`;
 
   const ta = todayAutos();
   if (ta.length) {
@@ -530,7 +566,7 @@ function pageHome() {
   if (new Date().getDay() === 0 && !rv?.done) {
     h += `<div class="section"><button class="btn block line" data-act="go" data-to="#/review">今天是周日，做 20 分钟周回顾</button></div>`;
   }
-  return h;
+  return h + `</div>`;
 }
 
 // ================= 页面：拼图列表 / 详情 / 编辑 =================
@@ -1460,13 +1496,15 @@ function showPlaced(p, { sub = '', then = () => {}, model, milestone = null } = 
   closeModal();
   const o = document.createElement('div');
   o.className = `placed-overlay ${milestone ? 'celebrate' : ''}`;
-  const title = milestone === 'whole' ? `整幅拼完了：${esc(pz.name)}` : milestone === 'income' ? '第一笔收款，拼上了' : `拼上了「${esc(p.name)}」`;
+  const title = milestone === 'whole' ? `整幅拼完了：${esc(pz.name)}` : milestone === 'income' ? '第一笔收款，拼上了' : esc(p.name);
   o.innerHTML = `<div class="placed-stage">
     <div class="tray">${jigsawSvg(pz, { mini: true, arriving: p.id, model })}</div>
+    <p class="placed-kicker">拼上了</p>
     <p class="placed-count"><b class="num" data-count>${pr.done - 1}</b><span> / ${pr.total}</span></p>
     <p class="placed-sub">${title}<span>${esc(sub)}</span></p>
   </div>`;
   document.body.appendChild(o);
+  hydrate();
   const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
   let gone = false;
   const go = () => {

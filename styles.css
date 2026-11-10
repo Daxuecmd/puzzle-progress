@@ -418,6 +418,91 @@ details summary { cursor: pointer; }
 .steps-list { padding-left: 20px; color: var(--ink-2); margin: 10px 0 14px; }
 .steps-list li + li { margin-top: 6px; }
 
+/* ================= v1.4 方向二「画就是首屏」 =================
+   颜色从主线那幅画里取：夜空的靛蓝做字，窗户的暖光只给「该你点的地方」。规范见 docs/design.md 的 v1.4 一节 */
+:root {
+  --paper: #F3EEE6; --ink: #232B4D; --ink-2: #5A5F7A; --ink-3: #62677F; --slot: #E7E1D6; --line: #E6DFD3;
+  --night: #1F2646; --amber: #EBA33B; --amber-ink: #2A1E05; --glow: #FFD08A; --coral: #A9472A; --cream: #FBF4E6;
+}
+.num { font-family: "Bahnschrift", "DIN Alternate", var(--sans); font-variant-numeric: tabular-nums; }
+
+/* 画：占满上半屏，顶上压一条暗色渐变放拼图名和同步状态 */
+.hero { position: relative; margin: -14px -20px 0; overflow: hidden; background: var(--slot); }
+.hero::before { content: ""; position: absolute; z-index: 2; left: 0; right: 0; top: 0; height: 86px; background: linear-gradient(rgba(20, 24, 50, .58), transparent); pointer-events: none; }
+.hero-top { position: absolute; z-index: 3; left: 12px; right: 8px; top: calc(8px + env(safe-area-inset-top)); display: flex; align-items: center; gap: 8px; }
+.hero-top .grow { flex: 1; }
+.hchip { max-width: 56%; min-height: 32px; border: 1px solid rgba(255, 255, 255, .28); border-radius: 999px; padding: 4px 13px; font-size: 13px; font-weight: 700; color: #fff; background: rgba(28, 34, 66, .5); backdrop-filter: blur(14px) saturate(160%); -webkit-backdrop-filter: blur(14px) saturate(160%); cursor: pointer; }
+.hero-top .sync { color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, .5); }
+.hero-top .sync.err { color: #FFD9CC; }
+.hero-top .icon-btn { width: 44px; height: 44px; }
+.hero-top .icon-btn svg { stroke: #fff; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .5)); }
+.hero .jigw { margin: 0; }
+.hero .jig .fill { fill: #F6F0E5; fill-opacity: .94; }
+.hero .jig .seam { stroke: rgba(35, 43, 77, .2); stroke-width: 1.4; }
+.hero .jig .done .seam { stroke: rgba(255, 255, 255, .55); stroke-width: 1.2; }
+.hero .jig .ghost-art { opacity: .5; }
+.jig .bdg circle { fill: var(--night); stroke: #fff; stroke-width: 2.4; }
+.jig .bdg text { font: 700 18px "Bahnschrift", "DIN Alternate", var(--sans); fill: #fff; }
+.jig .bdg.b0 circle { fill: var(--amber); }
+.jig .bdg.b0 text { fill: var(--amber-ink); }
+/* 等你点的那块：一圈走动的暖光边，30 秒后自己停（规格：30 秒无操作停循环） */
+.jig .want .seam { stroke: var(--amber); stroke-width: 3; stroke-dasharray: 7 6; fill: rgba(235, 163, 59, .12) !important; animation: m-march 1.4s linear 22; }
+
+/* 面板：压在画的下沿上 */
+.hsheet { position: relative; z-index: 4; margin: -30px -20px 0; padding: 22px 20px 4px; border-radius: 30px 30px 0 0; background: linear-gradient(#FBF6EE, var(--paper) 220px); box-shadow: 0 -18px 40px -24px rgba(20, 24, 50, .6); }
+.hsheet::before { content: ""; position: absolute; left: 50%; top: 8px; width: 38px; height: 4px; margin-left: -19px; border-radius: 2px; background: rgba(35, 43, 77, .18); }
+.hhd { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.hhd h1 { font-size: 26px; }
+.hhd h1 em { font-style: normal; color: var(--coral); }
+.hcount { border: 0; background: none; padding: 0; text-align: right; cursor: pointer; color: var(--ink); min-height: 44px; }
+.hcount b { font-size: 24px; font-weight: 700; }
+.hcount span { font-size: 14px; color: var(--ink-2); font-weight: 600; }
+.hcount small { display: block; font-size: 12.5px; font-weight: 700; color: var(--coral); line-height: 1.2; }
+.hsheet .pace { margin-top: 6px; }  /* 落后只说事实，不用红色（v1.3 规格） */
+.hsheet .focus { margin: 2px 0 14px; }
+
+.suggest { display: block; margin: 12px 0 0; border-radius: 22px; padding: 14px 16px 15px; background: var(--night); color: var(--cream); box-shadow: 0 16px 28px -18px rgba(31, 38, 70, .9); }
+.suggest .tag { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 700; color: var(--amber); }
+.suggest .tag i { width: 22px; height: 22px; border-radius: 50%; background: var(--amber); color: var(--amber-ink); display: grid; place-items: center; font-style: normal; font-size: 14px; }
+.suggest .name { font-size: 20px; font-weight: 800; line-height: 1.35; margin-top: 4px; }
+.suggest .small { margin: 1px 0 0; color: #C9CCE0; font-size: 13.5px; }
+.suggest .btns { display: flex; gap: 10px; margin-top: 12px; }
+.suggest .btn { min-height: 48px; border-radius: 999px; font-size: 16px; font-weight: 800; flex: 1; background: none; color: var(--cream); box-shadow: inset 0 0 0 1.5px rgba(251, 244, 230, .35); }
+.suggest .btn.yes { flex: 1.8; background: var(--amber); color: var(--amber-ink); box-shadow: 0 0 26px -4px rgba(235, 163, 59, .75); }
+
+#home-today { margin-top: 6px; }
+.today-row { display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 9px 2px; border-bottom: 1px solid rgba(35, 43, 77, .1); }
+.today-row .n { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; flex: none; background: var(--night); color: #fff; font-size: 15px; font-weight: 700; }
+.today-row .grow { flex: 1; min-width: 0; cursor: pointer; }
+.today-row .name { font-size: 16.5px; font-weight: 700; line-height: 1.35; }
+.today-row .sub { font-size: 13.5px; color: var(--ink-3); }
+.today-row .sub.next { color: var(--coral); font-weight: 600; }
+.today-row time { font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+.hswap { display: block; margin: 10px auto 0; min-height: 44px; }
+.hempty { margin-top: 12px; border-radius: 22px; background: var(--surface); padding: 18px; }
+.hempty p { margin: 0 0 14px; color: var(--ink-2); }
+/* 可点范围补到 44 以上（看起来不变大） */
+.hchip, .today-row .btn.sm, .meta-line a { position: relative; }
+.hchip::after, .today-row .btn.sm::after, .meta-line a::after { content: ""; position: absolute; inset: -8px -4px; }
+.meta-line a::after { inset: -12px -6px; }
+
+/* 底栏：悬浮的一条，中间是暖光色的话筒 */
+nav.tabs { left: 50%; right: auto; bottom: calc(12px + env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(330px, calc(100vw - 40px)); padding: 0; border: 0; border-radius: 999px; background: rgba(31, 38, 70, .94); box-shadow: 0 16px 30px -14px rgba(20, 24, 50, .8); }
+nav.tabs .in { grid-template-columns: 1fr 1fr 72px 1fr 1fr; height: 60px; }
+nav.tabs a { color: #B9BEDA; font-size: 0; min-height: 48px; }
+nav.tabs a.on { color: #fff; }
+.fab { width: 64px; height: 64px; margin-top: -22px; border: 4px solid var(--paper); background: var(--amber); box-shadow: 0 10px 22px -10px rgba(138, 90, 12, .8); }
+.fab svg { stroke: var(--amber-ink); stroke-width: 1.9; width: 27px; height: 27px; stroke-linejoin: round; }
+
+/* 拼上那一刻：整屏夜色，只给这一块 */
+.placed-overlay { background: rgba(31, 38, 70, .97); color: var(--cream); }
+.placed-stage .tray { background: rgba(251, 244, 230, .08); box-shadow: 0 30px 60px -24px rgba(235, 163, 59, .55); }
+.placed-kicker { margin: 22px 0 0; font-size: 14px; font-weight: 700; color: var(--amber); }
+.placed-count { margin-top: 0; color: #8E93B6; font-size: 22px; }
+.placed-count b { font-size: 84px; color: var(--cream); font-weight: 700; }
+.placed-sub { color: var(--cream); font-size: 19px; }
+.placed-sub span { color: #C9CCE0; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
